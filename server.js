@@ -2,65 +2,73 @@ const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// อาร์เรย์เก็บคีย์ที่สามารถใช้งานได้ (น้อง Beam สามารถเพิ่ม/ลบ/แก้ไขคีย์ตรงนี้ได้อิสระเลย!)
+// เก็บข้อมูลในรูปแบบ Object { key, expiry }
 let activeKeys = [
-    "REVEZY-FREE-9999",
-    "REVEZY-VIP-BEAM",
-    "REVEZY-ADMIN-TEST",
-    "NOT-BOOSTER-OP"
+    { key: "REVEZY-FREE-9999", expiry: "2026-12-31T23:59:59" },
+    { key: "REVEZY-VIP-BEAM", expiry: "2026-06-30T23:59:59" }
 ];
 
-app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// 1. เส้นทางหน้าหลัก (แสดงสถานะเว็บสร้างคีย์แบบง่ายๆ)
+// 1. หน้าหลัก (แสดงเวลาหมดอายุด้วย)
 app.get('/', (req, res) => {
     res.send(`
         <body style="background:#111; color:#fff; font-family:sans-serif; padding:40px;">
-            <h2>REVEZY KEY MANAGER (ONLINE)</h2>
-            <p>คีย์ทั้งหมดที่ใช้งานได้ในปัจจุบัน:</p>
+            <h2>REVEZY KEY MANAGER (AUTO-EXPIRY)</h2>
+            <form action="/add" method="POST" style="margin-bottom:20px;">
+                <input type="text" name="key" placeholder="ชื่อคีย์" required>
+                <input type="datetime-local" name="expiry" required>
+                <button type="submit">เพิ่มคีย์พร้อมตั้งเวลา</button>
+            </form>
             <ul>
-                ${activeKeys.map(k => `<li><code>${k}</code></li>`).join('')}
+                ${activeKeys.map(k => `
+                    <li>
+                        <code>${k.key}</code> (หมดอายุ: ${k.expiry})
+                        <a href="/remove?key=${k.key}" style="color:red; margin-left:10px;">[ลบ]</a>
+                    </li>
+                `).join('')}
             </ul>
-            <hr style="border-color:#333;">
-            <p>วิธีเพิ่มคีย์ผ่าน URL: <code>/add?key=คีย์ใหม่ที่ต้องการ</code></p>
-            <p>วิธีลบคีย์ผ่าน URL: <code>/remove?key=คีย์ที่จะลบ</code></p>
         </body>
     `);
 });
 
-// 2. API สำหรับตรวจสอบคีย์ (ที่ตัวโปรแกรม Electron ดึงไปใช้)
+// 2. API ตรวจสอบคีย์ + เช็คเวลาอัตโนมัติ
 app.get('/verify', (req, res) => {
     const userKey = req.query.key;
+    const now = new Date();
     
-    if (activeKeys.includes(userKey)) {
-        res.json({ success: true, message: "คีย์ผ่านการตรวจสอบสำเร็จ!" });
-    } else {
-        res.json({ success: false, message: "ไม่พบข้อมูลคีย์นี้ หรือคีย์อาจจะหมดอายุแล้ว" });
+    // หาคีย์ในอาร์เรย์
+    const foundKey = activeKeys.find(k => k.key === userKey);
+
+    if (!foundKey) {
+        return res.json({ success: false, message: "ไม่พบข้อมูลคีย์" });
     }
+
+    // เช็คว่าหมดอายุหรือยัง
+    if (new Date(foundKey.expiry) < now) {
+        // ถ้าหมดอายุแล้ว ให้ลบออกไปเลย
+        activeKeys = activeKeys.filter(k => k.key !== userKey);
+        return res.json({ success: false, message: "คีย์หมดอายุแล้วและถูกลบออกจากระบบ" });
+    }
+
+    res.json({ success: true, message: "คีย์ใช้งานได้!" });
 });
 
-// 3. ระบบสร้างคีย์เพิ่มเติมแบบกำหนดเองได้ตามใจชอบผ่านเบราว์เซอร์
-app.get('/add', (req, res) => {
-    const newKey = req.query.key;
-    if(newKey && !activeKeys.includes(newKey)) {
-        activeKeys.push(newKey);
-        res.send(`เพิ่มคีย์ [ ${newKey} ] เรียบร้อยแล้ว! <a href="/">กลับหน้าหลัก</a>`);
-    } else {
-        res.send("คีย์ซ้ำ หรือ ไม่ได้ระบุคีย์");
+// 3. เพิ่มคีย์พร้อมตั้งเวลา
+app.post('/add', (req, res) => {
+    const { key, expiry } = req.body;
+    if(key && expiry && !activeKeys.find(k => k.key === key)) {
+        activeKeys.push({ key, expiry });
     }
+    res.redirect('/');
 });
 
-// 4. ระบบลบคีย์เมื่อหมดอายุใช้งาน
+// 4. ลบคีย์
 app.get('/remove', (req, res) => {
-    const targetKey = req.query.key;
-    if(activeKeys.includes(targetKey)) {
-        activeKeys = activeKeys.filter(k => k !== targetKey);
-        res.send(`ลบคีย์ [ ${targetKey} ] ออกจากระบบแล้ว! <a href="/">กลับหน้าหลัก</a>`);
-    } else {
-        res.send("ไม่พบคีย์ที่ต้องการลบ");
-    }
+    activeKeys = activeKeys.filter(k => k.key !== req.query.key);
+    res.redirect('/');
 });
 
 app.listen(PORT, () => {
-    console.log(`Server key system running on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 });
