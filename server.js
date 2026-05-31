@@ -1,170 +1,83 @@
 const express = require('express');
+const Datastore = require('nedb-promises');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// อาร์เรย์เก็บข้อมูลคีย์ในระบบ
-let activeKeys = [
-    "REVEZY-FREE-9999",
-    "REVEZY-VIP-BEAM"
-];
+// โหลดฐานข้อมูล (ถ้าไม่มีไฟล์จะสร้างให้เอง)
+const db = Datastore.create({ filename: 'keys.db', autoload: true });
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// --- 1. หน้าเว็บหลัก Dashboard (UI โทนดำดุดัน) ---
-app.get('/', (req, res) => {
+// --- หน้า Dashboard ---
+app.get('/', async (req, res) => {
+    const keys = await db.find({});
     res.send(`
     <!DOCTYPE html>
-    <html lang="th">
-    <head>
-        <meta charset="UTF-8">
-        <title>REVEZY CONTROL PANEL</title>
-        <style>
-            * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
-            body { 
-                background: #0a0a0a; 
-                color: #ffffff; 
-                padding: 40px 20px;
-                display: flex;
-                justify-content: center;
-            }
-            .panel-container {
-                width: 100%;
-                max-width: 600px;
-                background: #111111;
-                border: 1px solid #222222;
-                border-radius: 16px;
-                padding: 30px;
-                box-shadow: 0 20px 50px rgba(0,0,0,0.7);
-            }
-            h1 { font-size: 24px; font-weight: 800; letter-spacing: 2px; margin-bottom: 5px; text-transform: uppercase; }
-            .subtitle { font-size: 12px; color: #555; margin-bottom: 30px; letter-spacing: 1px; }
-            
-            /* โซนสร้างคีย์ */
-            .action-box {
-                background: #161616;
-                border: 1px solid #252525;
-                padding: 20px;
-                border-radius: 12px;
-                margin-bottom: 30px;
-            }
-            .form-group { display: flex; gap: 10px; margin-top: 10px; }
-            input[type="text"] {
-                flex: 1;
-                padding: 12px;
-                background: #0a0a0a;
-                border: 1px solid #333;
-                border-radius: 8px;
-                color: #fff;
-                font-size: 14px;
-                outline: none;
-            }
-            input[type="text"]:focus { border-color: #fff; }
-            
-            button {
-                padding: 12px 20px;
-                border-radius: 8px;
-                border: none;
-                font-weight: 700;
-                cursor: pointer;
-                transition: 0.2s;
-            }
-            .btn-add { background: #ffffff; color: #000000; }
-            .btn-add:hover { background: #cccccc; }
-            .btn-gen { background: #222; color: #fff; border: 1px solid #444; }
-            .btn-gen:hover { background: #333; }
-            .btn-delete { background: #ff3333; color: #fff; padding: 6px 12px; font-size: 12px; }
-            .btn-delete:hover { background: #cc0000; }
-
-            /* ตารางแสดงคีย์ */
-            h3 { font-size: 16px; margin-bottom: 15px; color: #888; letter-spacing: 1px; }
-            .key-list { list-style: none; }
-            .key-item {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                padding: 12px 15px;
-                background: #141414;
-                border: 1px solid #222;
-                border-radius: 8px;
-                margin-bottom: 8px;
-            }
-            .key-text { font-family: monospace; font-size: 14px; color: #00ff77; letter-spacing: 1px; }
-        </style>
-    </head>
-    <body>
-        <div class="panel-container">
-            <h1>REVEZY CENTER</h1>
-            <div class="subtitle">ONLINE LICENSE KEY MANAGER</div>
-
-            <div class="action-box">
-                <h3>CREATE LICENSE KEY</h3>
-                <form action="/add" method="POST">
-                    <div class="form-group">
-                        <input type="text" id="key-input" name="key" placeholder="พิมพ์คีย์เอง หรือกดสุ่มด้านขวา" required>
-                        <button type="button" class="btn-gen" onclick="generateRandomKey()">สุ่มคีย์</button>
-                        <button type="submit" class="btn-add">เพิ่มคีย์</button>
-                    </div>
-                </form>
-            </div>
-
-            <h3>ACTIVE KEYS (${activeKeys.length})</h3>
-            <ul class="key-list">
-                ${activeKeys.length === 0 ? '<li style="color:#444; text-align:center; font-size:14px; padding:20px;">ไม่มีคีย์ในระบบในขณะนี้</li>' : ''}
-                ${activeKeys.map(k => `
-                    <li class="key-item">
-                        <span class="key-text">${k}</span>
-                        <a href="/remove?key=${encodeURIComponent(k)}">
-                            <button class="btn-delete">ลบ</button>
-                        </a>
-                    </li>
-                `).join('')}
-            </ul>
+    <html lang="th"><head><meta charset="UTF-8"><title>REVEZY PRO CONTROL</title>
+    <style>
+        body { background: #050505; color: #fff; font-family: monospace; padding: 20px; }
+        .container { max-width: 800px; margin: auto; }
+        .card { background: #111; padding: 20px; border-radius: 10px; border: 1px solid #333; margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 10px; border: 1px solid #222; text-align: left; }
+        .active { color: #00ff77; }
+        .banned { color: #ff3333; }
+    </style></head><body>
+    <div class="container">
+        <h1>REVEZY PRO MANAGER</h1>
+        <div class="card">
+            <form action="/add" method="POST">
+                <input type="text" name="key" placeholder="License Key" required>
+                <input type="date" name="expiry" required>
+                <button type="submit">เพิ่มคีย์</button>
+            </form>
         </div>
-
-        <script>
-            function generateRandomKey() {
-                const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-                let part1 = '';
-                let part2 = '';
-                for (let i = 0; i < 4; i++) {
-                    part1 += chars.charAt(Math.floor(Math.random() * chars.length));
-                    part2 += chars.charAt(Math.floor(Math.random() * chars.length));
-                }
-                document.getElementById('key-input').value = 'REVEZY-' + part1 + '-' + part2;
-            }
-        </script>
-    </body>
-    </html>
-    `);
+        <div class="card">
+            <table>
+                <tr><th>Key</th><th>Expire</th><th>Status</th><th>Action</th></tr>
+                ${keys.map(k => `<tr>
+                    <td>${k.key}</td><td>${k.expiry}</td>
+                    <td class="${k.status}">${k.status}</td>
+                    <td>
+                        <a href="/toggle?id=${k._id}">Switch</a> | 
+                        <a href="/delete?id=${k._id}">ลบ</a>
+                    </td>
+                </tr>`).join('')}
+            </table>
+        </div>
+    </div></body></html>`);
 });
 
-// --- 2. API สำหรับตรวจสอบคีย์ (ที่ตัวโปรแกรม Electron ยิงมาเช็ค) ---
-app.get('/verify', (req, res) => {
-    const userKey = req.query.key;
-    if (activeKeys.includes(userKey)) {
-        res.json({ success: true, message: "คีย์ผ่านการตรวจสอบสำเร็จ!" });
-    } else {
-        res.json({ success: false, message: "ไม่พบข้อมูลคีย์นี้ หรือคีย์อาจจะหมดอายุแล้ว" });
-    }
+// --- API ตรวจสอบคีย์ (ที่ตัวโปรแกรมยิงมา) ---
+app.get('/verify', async (req, res) => {
+    const keyData = await db.findOne({ key: req.query.key });
+    if (!keyData) return res.json({ success: false, message: "ไม่พบข้อมูล" });
+    
+    if (keyData.status === 'banned') return res.json({ success: false, message: "คีย์ของคุณถูกระงับ: " + keyData.reason });
+    if (new Date() > new Date(keyData.expiry)) return res.json({ success: false, message: "คีย์หมดอายุแล้ว" });
+    
+    res.json({ success: true, message: "ใช้งานได้ปกติ" });
 });
 
-// --- 3. ระบบกดเพิ่มคีย์จากหน้าเว็บ ---
-app.post('/add', (req, res) => {
-    const newKey = req.body.key.trim();
-    if (newKey && !activeKeys.includes(newKey)) {
-        activeKeys.push(newKey);
-    }
+// --- ระบบเพิ่มคีย์ ---
+app.post('/add', async (req, res) => {
+    await db.insert({ key: req.body.key, expiry: req.body.expiry, status: 'active', reason: '-' });
     res.redirect('/');
 });
 
-// --- 4. ระบบกดลบคีย์จากหน้าเว็บ ---
-app.get('/remove', (req, res) => {
-    const targetKey = req.query.key;
-    activeKeys = activeKeys.filter(k => k !== targetKey);
+// --- ระบบสลับสถานะ (ระงับ/ใช้งาน) ---
+app.get('/toggle', async (req, res) => {
+    const k = await db.findOne({ _id: req.query.id });
+    const newStatus = k.status === 'active' ? 'banned' : 'active';
+    const reason = newStatus === 'banned' ? 'โดนแบนโดยแอดมิน' : '-';
+    await db.update({ _id: req.query.id }, { $set: { status: newStatus, reason: reason } });
     res.redirect('/');
 });
 
-app.listen(PORT, () => {
-    console.log(`Hacker Dashboard running on port ${PORT}`);
+app.get('/delete', async (req, res) => {
+    await db.remove({ _id: req.query.id });
+    res.redirect('/');
 });
+
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
