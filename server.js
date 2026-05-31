@@ -1,83 +1,66 @@
 const express = require('express');
-const Datastore = require('nedb-promises');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// โหลดฐานข้อมูล (ถ้าไม่มีไฟล์จะสร้างให้เอง)
-const db = Datastore.create({ filename: 'keys.db', autoload: true });
+// อาร์เรย์เก็บคีย์ที่สามารถใช้งานได้ (น้อง Beam สามารถเพิ่ม/ลบ/แก้ไขคีย์ตรงนี้ได้อิสระเลย!)
+let activeKeys = [
+    "REVEZY-FREE-9999",
+    "REVEZY-VIP-BEAM",
+    "REVEZY-ADMIN-TEST",
+    "NOT-BOOSTER-OP"
+];
 
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
-// --- หน้า Dashboard ---
-app.get('/', async (req, res) => {
-    const keys = await db.find({});
+// 1. เส้นทางหน้าหลัก (แสดงสถานะเว็บสร้างคีย์แบบง่ายๆ)
+app.get('/', (req, res) => {
     res.send(`
-    <!DOCTYPE html>
-    <html lang="th"><head><meta charset="UTF-8"><title>REVEZY PRO CONTROL</title>
-    <style>
-        body { background: #050505; color: #fff; font-family: monospace; padding: 20px; }
-        .container { max-width: 800px; margin: auto; }
-        .card { background: #111; padding: 20px; border-radius: 10px; border: 1px solid #333; margin-bottom: 20px; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 10px; border: 1px solid #222; text-align: left; }
-        .active { color: #00ff77; }
-        .banned { color: #ff3333; }
-    </style></head><body>
-    <div class="container">
-        <h1>REVEZY PRO MANAGER</h1>
-        <div class="card">
-            <form action="/add" method="POST">
-                <input type="text" name="key" placeholder="License Key" required>
-                <input type="date" name="expiry" required>
-                <button type="submit">เพิ่มคีย์</button>
-            </form>
-        </div>
-        <div class="card">
-            <table>
-                <tr><th>Key</th><th>Expire</th><th>Status</th><th>Action</th></tr>
-                ${keys.map(k => `<tr>
-                    <td>${k.key}</td><td>${k.expiry}</td>
-                    <td class="${k.status}">${k.status}</td>
-                    <td>
-                        <a href="/toggle?id=${k._id}">Switch</a> | 
-                        <a href="/delete?id=${k._id}">ลบ</a>
-                    </td>
-                </tr>`).join('')}
-            </table>
-        </div>
-    </div></body></html>`);
+        <body style="background:#111; color:#fff; font-family:sans-serif; padding:40px;">
+            <h2>REVEZY KEY MANAGER (ONLINE)</h2>
+            <p>คีย์ทั้งหมดที่ใช้งานได้ในปัจจุบัน:</p>
+            <ul>
+                ${activeKeys.map(k => `<li><code>${k}</code></li>`).join('')}
+            </ul>
+            <hr style="border-color:#333;">
+            <p>วิธีเพิ่มคีย์ผ่าน URL: <code>/add?key=คีย์ใหม่ที่ต้องการ</code></p>
+            <p>วิธีลบคีย์ผ่าน URL: <code>/remove?key=คีย์ที่จะลบ</code></p>
+        </body>
+    `);
 });
 
-// --- API ตรวจสอบคีย์ (ที่ตัวโปรแกรมยิงมา) ---
-app.get('/verify', async (req, res) => {
-    const keyData = await db.findOne({ key: req.query.key });
-    if (!keyData) return res.json({ success: false, message: "ไม่พบข้อมูล" });
+// 2. API สำหรับตรวจสอบคีย์ (ที่ตัวโปรแกรม Electron ดึงไปใช้)
+app.get('/verify', (req, res) => {
+    const userKey = req.query.key;
     
-    if (keyData.status === 'banned') return res.json({ success: false, message: "คีย์ของคุณถูกระงับ: " + keyData.reason });
-    if (new Date() > new Date(keyData.expiry)) return res.json({ success: false, message: "คีย์หมดอายุแล้ว" });
-    
-    res.json({ success: true, message: "ใช้งานได้ปกติ" });
+    if (activeKeys.includes(userKey)) {
+        res.json({ success: true, message: "คีย์ผ่านการตรวจสอบสำเร็จ!" });
+    } else {
+        res.json({ success: false, message: "ไม่พบข้อมูลคีย์นี้ หรือคีย์อาจจะหมดอายุแล้ว" });
+    }
 });
 
-// --- ระบบเพิ่มคีย์ ---
-app.post('/add', async (req, res) => {
-    await db.insert({ key: req.body.key, expiry: req.body.expiry, status: 'active', reason: '-' });
-    res.redirect('/');
+// 3. ระบบสร้างคีย์เพิ่มเติมแบบกำหนดเองได้ตามใจชอบผ่านเบราว์เซอร์
+app.get('/add', (req, res) => {
+    const newKey = req.query.key;
+    if(newKey && !activeKeys.includes(newKey)) {
+        activeKeys.push(newKey);
+        res.send(`เพิ่มคีย์ [ ${newKey} ] เรียบร้อยแล้ว! <a href="/">กลับหน้าหลัก</a>`);
+    } else {
+        res.send("คีย์ซ้ำ หรือ ไม่ได้ระบุคีย์");
+    }
 });
 
-// --- ระบบสลับสถานะ (ระงับ/ใช้งาน) ---
-app.get('/toggle', async (req, res) => {
-    const k = await db.findOne({ _id: req.query.id });
-    const newStatus = k.status === 'active' ? 'banned' : 'active';
-    const reason = newStatus === 'banned' ? 'โดนแบนโดยแอดมิน' : '-';
-    await db.update({ _id: req.query.id }, { $set: { status: newStatus, reason: reason } });
-    res.redirect('/');
+// 4. ระบบลบคีย์เมื่อหมดอายุใช้งาน
+app.get('/remove', (req, res) => {
+    const targetKey = req.query.key;
+    if(activeKeys.includes(targetKey)) {
+        activeKeys = activeKeys.filter(k => k !== targetKey);
+        res.send(`ลบคีย์ [ ${targetKey} ] ออกจากระบบแล้ว! <a href="/">กลับหน้าหลัก</a>`);
+    } else {
+        res.send("ไม่พบคีย์ที่ต้องการลบ");
+    }
 });
 
-app.get('/delete', async (req, res) => {
-    await db.remove({ _id: req.query.id });
-    res.redirect('/');
+app.listen(PORT, () => {
+    console.log(`Server key system running on port ${PORT}`);
 });
-
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
