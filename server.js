@@ -2,59 +2,65 @@ const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// เก็บข้อมูลในรูปแบบ Object { key, expiry }
+// โครงสร้างข้อมูลคีย์ (key, expiry)
 let activeKeys = [
-    { key: "REVEZY-FREE-9999", expiry: "2026-12-31T23:59:59" },
-    { key: "REVEZY-VIP-BEAM", expiry: "2026-06-30T23:59:59" }
+    { key: "REVEZY-VIP-BEAM", expiry: "2026-12-31T23:59:59" }
 ];
 
 app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 
-// 1. หน้าหลัก (แสดงเวลาหมดอายุด้วย)
+// 1. หน้า Dashboard แบบปุ่มกดและโทนดำดุดัน
 app.get('/', (req, res) => {
     res.send(`
-        <body style="background:#111; color:#fff; font-family:sans-serif; padding:40px;">
-            <h2>REVEZY KEY MANAGER (AUTO-EXPIRY)</h2>
-            <form action="/add" method="POST" style="margin-bottom:20px;">
-                <input type="text" name="key" placeholder="ชื่อคีย์" required>
-                <input type="datetime-local" name="expiry" required>
-                <button type="submit">เพิ่มคีย์พร้อมตั้งเวลา</button>
+    <body style="background:#0a0a0a; color:#fff; font-family:'Segoe UI', sans-serif; display:flex; justify-content:center; padding:40px;">
+        <div style="width:100%; max-width:450px;">
+            <h2 style="letter-spacing:3px; color:#ef4444; text-align:center;">REVEZY KEY CENTER</h2>
+            
+            <form action="/add" method="POST" style="background:#111; padding:25px; border-radius:12px; border:1px solid #222;">
+                <input type="text" name="key" placeholder="ชื่อคีย์ (เช่น REVEZY-XXXX)" required style="width:100%; padding:12px; margin-bottom:10px; background:#000; color:#fff; border:1px solid #333; border-radius:4px; box-sizing:border-box;">
+                <input type="datetime-local" name="expiry" required style="width:100%; padding:12px; margin-bottom:15px; background:#000; color:#fff; border:1px solid #333; border-radius:4px; box-sizing:border-box;">
+                <button type="submit" style="width:100%; padding:12px; background:#fff; font-weight:bold; cursor:pointer; border:none; border-radius:6px;">เพิ่มคีย์เข้าสู่ระบบ</button>
             </form>
-            <ul>
-                ${activeKeys.map(k => `
-                    <li>
-                        <code>${k.key}</code> (หมดอายุ: ${k.expiry})
-                        <a href="/remove?key=${k.key}" style="color:red; margin-left:10px;">[ลบ]</a>
-                    </li>
-                `).join('')}
-            </ul>
-        </body>
+
+            <h3 style="margin-top:30px; color:#666; font-size:14px;">รายการคีย์ที่ใช้งานได้ (${activeKeys.length})</h3>
+            ${activeKeys.map(k => `
+                <div style="background:#111; margin-bottom:10px; padding:15px; border-radius:8px; display:flex; justify-content:space-between; align-items:center; border:1px solid #222;">
+                    <div>
+                        <div style="font-weight:bold; color:#00ff77;">${k.key}</div>
+                        <div style="font-size:10px; color:#555;">หมดอายุ: ${k.expiry.replace('T', ' ')}</div>
+                    </div>
+                    <form action="/remove" method="POST">
+                        <input type="hidden" name="key" value="${k.key}">
+                        <button type="submit" style="background:#ef4444; color:#fff; border:none; padding:8px 15px; border-radius:4px; cursor:pointer; font-size:12px; font-weight:bold;">ลบคีย์</button>
+                    </form>
+                </div>
+            `).join('')}
+        </div>
+    </body>
     `);
 });
 
-// 2. API ตรวจสอบคีย์ + เช็คเวลาอัตโนมัติ
+// 2. API ตรวจสอบคีย์ (สำหรับ Revezy Ultra)
 app.get('/verify', (req, res) => {
     const userKey = req.query.key;
     const now = new Date();
-    
-    // หาคีย์ในอาร์เรย์
     const foundKey = activeKeys.find(k => k.key === userKey);
 
     if (!foundKey) {
-        return res.json({ success: false, message: "ไม่พบข้อมูลคีย์" });
+        return res.json({ success: false, message: "คีย์ไม่ถูกต้อง" });
     }
 
-    // เช็คว่าหมดอายุหรือยัง
+    // ระบบเช็ควันหมดอายุ
     if (new Date(foundKey.expiry) < now) {
-        // ถ้าหมดอายุแล้ว ให้ลบออกไปเลย
-        activeKeys = activeKeys.filter(k => k.key !== userKey);
-        return res.json({ success: false, message: "คีย์หมดอายุแล้วและถูกลบออกจากระบบ" });
+        activeKeys = activeKeys.filter(k => k.key !== userKey); // ลบทิ้งเองอัตโนมัติ
+        return res.json({ success: false, message: "คีย์หมดอายุแล้ว" });
     }
 
-    res.json({ success: true, message: "คีย์ใช้งานได้!" });
+    res.json({ success: true, message: "ผ่านการตรวจสอบ" });
 });
 
-// 3. เพิ่มคีย์พร้อมตั้งเวลา
+// 3. รับค่าเพิ่มคีย์
 app.post('/add', (req, res) => {
     const { key, expiry } = req.body;
     if(key && expiry && !activeKeys.find(k => k.key === key)) {
@@ -63,12 +69,12 @@ app.post('/add', (req, res) => {
     res.redirect('/');
 });
 
-// 4. ลบคีย์
-app.get('/remove', (req, res) => {
-    activeKeys = activeKeys.filter(k => k.key !== req.query.key);
+// 4. รับค่าลบคีย์
+app.post('/remove', (req, res) => {
+    activeKeys = activeKeys.filter(k => k.key !== req.body.key);
     res.redirect('/');
 });
 
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`System Online on port ${PORT}`);
 });
