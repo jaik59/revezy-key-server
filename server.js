@@ -88,5 +88,4 @@ client.on('interactionCreate', async (interaction) => {
         setTimeout(() => interaction.channel.delete(), 5000);
     }
 });
-
-client.login('MTUxMDEyNDA4MjEyMzc3MTkwNA.GMJ981.HtmtkVQwqGUWgFapeIW-yUdlQfsa587-AsV8Zs');
+Zs');
