@@ -1,107 +1,92 @@
-const express = require('express');
-const app = express();
-const PORT = process.env.PORT || 3000;
+const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionsBitField } = require('discord.js');
 
-// อาร์เรย์เก็บคีย์ที่สามารถใช้งานได้ (น้อง Beam สามารถเพิ่ม/ลบ/แก้ไขคีย์ตรงนี้ได้อิสระเลย!)
-let activeKeys = [
-    "REVEZY-FREE-9999",
-    "REVEZY-VIP-BEAM",
-    "REVEZY-ADMIN-TEST",
-    "NOT-BOOSTER-OP"
-];
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 
-app.use(express.json());
+// --- ตั้งค่า ID ต่างๆ ---
+const CATEGORY_ID = '1510122713249874090'; 
+const ADMIN_ROLE_ID = '1509887559063572571'; 
+const LOG_CHANNEL_ID = '1510125398153887874'; // ห้องแจ้งเตือนแอดมิน
 
-// 1. เส้นทางหน้าหลัก (แสดงสถานะเว็บสร้างคีย์แบบง่ายๆ)
-app.get('/', (req, res) => {
-    res.send(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <style>
-                :root { --bg: #0f172a; --card: #1e293b; --accent: #38bdf8; --danger: #ef4444; --success: #22c55e; }
-                body { background: var(--bg); color: #f1f5f9; font-family: 'Segoe UI', sans-serif; display: flex; justify-content: center; padding: 20px; }
-                .container { background: var(--card); padding: 25px; border-radius: 24px; box-shadow: 0 15px 30px rgba(0,0,0,0.5); width: 100%; max-width: 450px; }
-                h2 { text-align: center; color: var(--accent); margin-bottom: 25px; }
-                .key-list { display: flex; flex-direction: column; gap: 10px; }
-                .item { background: #334155; padding: 12px 20px; border-radius: 50px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #475569; }
-                code { color: #fbbf24; font-weight: bold; }
-                .btn { cursor: pointer; border: none; padding: 8px 16px; border-radius: 50px; font-weight: bold; transition: 0.2s; }
-                .del { background: var(--danger); color: white; }
-                .del:hover { opacity: 0.8; }
-                .add-box { display: flex; gap: 10px; margin-top: 25px; }
-                input { flex: 1; padding: 12px 20px; border-radius: 50px; border: none; background: #f1f5f9; outline: none; }
-                .add-btn { background: var(--success); color: white; padding: 10px 20px; border-radius: 50px; border: none; cursor: pointer; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h2>REVEZY KEY MANAGER</h2>
-                <div class="key-list" id="keyList">
-                    ${activeKeys.map(k => `
-                        <div class="item" id="key-${k}">
-                            <code>${k}</code>
-                            <button class="btn del" onclick="removeKey('${k}')">ลบ</button>
-                        </div>
-                    `).join('')}
-                </div>
-                <div class="add-box">
-                    <input type="text" id="kInput" placeholder="พิมพ์คีย์ใหม่ที่นี่...">
-                    <button class="add-btn" onclick="addKey()">เพิ่ม</button>
-                </div>
-            </div>
+client.on('ready', () => console.log(`[SYSTEM] ʜᴠᴇᴢʀ ꜱᴛᴏʀᴇ บอทออนไลน์แล้ว!`));
 
-            <script>
-                async function removeKey(k) {
-                    await fetch('/remove?key=' + k);
-                    document.getElementById('key-'+k).remove();
-                }
-                async function addKey() {
-                    let k = document.getElementById('kInput').value;
-                    if(!k) return;
-                    await fetch('/add?key=' + k);
-                    location.reload();
-                }
-            </script>
-        </body>
-        </html>
-    `);
-});
+// 1. ส่ง Embed เมนูบริการ BOOST FPS
+client.on('messageCreate', async (message) => {
+    if (message.content === '!menu') {
+        const embed = new EmbedBuilder()
+            .setTitle('⚡ ʜᴠᴇᴢʀ ꜱᴛᴏʀᴇ - BOOST FPS SERVICE')
+            .setDescription('ยินดีต้อนรับสู่ร้าน ʜᴠᴇᴢʀ ꜱᴛᴏʀᴇ\nกรุณาเลือกความสำคัญเพื่อเริ่มรับบริการปรับแต่ง FPS ของคุณ')
+            .setColor(0x7289da)
+            .setThumbnail('https://cdn-icons-png.flaticon.com/512/684/684908.png') // ใส่รูปโลโก้ร้าน
+            .setFooter({ text: 'ʜᴠᴇᴢʀ ꜱᴛᴏʀᴇ - คุณภาพที่คุณสัมผัสได้' });
 
-// 2. API สำหรับตรวจสอบคีย์ (ที่ตัวโปรแกรม Electron ดึงไปใช้)
-app.get('/verify', (req, res) => {
-    const userKey = req.query.key;
-    
-    if (activeKeys.includes(userKey)) {
-        res.json({ success: true, message: "คีย์ผ่านการตรวจสอบสำเร็จ!" });
-    } else {
-        res.json({ success: false, message: "ไม่พบข้อมูลคีย์นี้ หรือคีย์อาจจะหมดอายุแล้ว" });
+        const row = new ActionRowBuilder().addComponents(
+            new StringSelectMenuBuilder()
+                .setCustomId('select_priority')
+                .setPlaceholder('เลือกระดับความเร่งด่วน')
+                .addOptions([
+                    { label: 'ธรรมดา (ปกติ)', value: 'normal', emoji: '✅' },
+                    { label: 'กลาง (คิวพิเศษ)', value: 'medium', emoji: '⏩' },
+                    { label: 'เร่งด่วน (ทันที)', value: 'urgent', emoji: '🚨' },
+                ])
+        );
+        await message.channel.send({ embeds: [embed], components: [row] });
     }
 });
 
-// 3. ระบบสร้างคีย์เพิ่มเติมแบบกำหนดเองได้ตามใจชอบผ่านเบราว์เซอร์
-app.get('/add', (req, res) => {
-    const newKey = req.query.key;
-    if(newKey && !activeKeys.includes(newKey)) {
-        activeKeys.push(newKey);
-        res.send(`เพิ่มคีย์ [ ${newKey} ] เรียบร้อยแล้ว! <a href="/">กลับหน้าหลัก</a>`);
-    } else {
-        res.send("คีย์ซ้ำ หรือ ไม่ได้ระบุคีย์");
+// 2. ระบบสร้างตั๋วและแจ้งเตือนหลังบ้าน
+client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isStringSelectMenu()) return;
+
+    const priority = interaction.values[0];
+    const user = interaction.user;
+
+    // สร้างห้องตั๋ว
+    const channel = await interaction.guild.channels.create({
+        name: `fps-${user.username}`,
+        type: ChannelType.GuildText,
+        parent: CATEGORY_ID,
+        permissionOverwrites: [
+            { id: interaction.guild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+            { id: user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
+            { id: ADMIN_ROLE_ID, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
+        ]
+    });
+
+    // แจ้งเตือนแอดมิน (หลังบ้าน)
+    const logChannel = interaction.guild.channels.cache.get(LOG_CHANNEL_ID);
+    if (logChannel) {
+        const logEmbed = new EmbedBuilder()
+            .setTitle('🔔 มีคำขอใช้บริการใหม่!')
+            .setColor(0xFFFF00)
+            .addFields(
+                { name: 'ลูกค้า', value: `${user.tag}`, inline: true },
+                { name: 'ระดับความสำคัญ', value: `${priority.toUpperCase()}`, inline: true },
+                { name: 'ห้องที่เปิด', value: `${channel}`, inline: true }
+            )
+            .setTimestamp();
+        logChannel.send({ content: `<@&${ADMIN_ROLE_ID}>`, embeds: [logEmbed] });
+    }
+
+    // ข้อความในตั๋ว
+    const ticketEmbed = new EmbedBuilder()
+        .setTitle('⚡ ʜᴠᴇᴢʀ ꜱᴛᴏʀᴇ | Ticket Support')
+        .setDescription(`สวัสดีคุณ ${user} ทีมงานได้รับคำขอ **BOOST FPS (${priority.toUpperCase()})** ของคุณแล้ว กรุณารอสักครู่ แอดมินจะมาดำเนินการให้ครับ`)
+        .setColor(0x7289da);
+
+    const closeBtn = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('close_ticket').setLabel('ปิดการสนทนา').setStyle(ButtonStyle.Danger)
+    );
+
+    await channel.send({ content: `<@&${ADMIN_ROLE_ID}>`, embeds: [ticketEmbed], components: [closeBtn] });
+    await interaction.reply({ content: `✅ สร้างตั๋วเรียบร้อยแล้วที่ ${channel}`, ephemeral: true });
+});
+
+// 3. ปิดตั๋ว
+client.on('interactionCreate', async (interaction) => {
+    if (interaction.isButton() && interaction.customId === 'close_ticket') {
+        await interaction.reply('กำลังปิดห้องใน 5 วินาที...');
+        setTimeout(() => interaction.channel.delete(), 5000);
     }
 });
 
-// 4. ระบบลบคีย์เมื่อหมดอายุใช้งาน
-app.get('/remove', (req, res) => {
-    const targetKey = req.query.key;
-    if(activeKeys.includes(targetKey)) {
-        activeKeys = activeKeys.filter(k => k !== targetKey);
-        res.send(`ลบคีย์ [ ${targetKey} ] ออกจากระบบแล้ว! <a href="/">กลับหน้าหลัก</a>`);
-    } else {
-        res.send("ไม่พบคีย์ที่ต้องการลบ");
-    }
-});
-
-app.listen(PORT, () => {
-    console.log(`Server key system running on port ${PORT}`);
-});
+client.login('MTUxMDEyNDA4MjEyMzc3MTkwNA.GMJ981.HtmtkVQwqGUWgFapeIW-yUdlQfsa587-AsV8Zs');
