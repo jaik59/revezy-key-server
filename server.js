@@ -1,97 +1,107 @@
 const express = require('express');
-const axios = require('axios');
 const app = express();
+const PORT = process.env.PORT || 3000;
 
-// ใส่ค่าของคุณลงไปที่นี่ได้เลย
-const BIN_ID = 'ใส่_BIN_ID_ของคุณตรงนี้'; 
-const X_MASTER_KEY = 'ใส่_MASTER_KEY_ของคุณตรงนี้';
+// อาร์เรย์เก็บคีย์ที่สามารถใช้งานได้ (น้อง Beam สามารถเพิ่ม/ลบ/แก้ไขคีย์ตรงนี้ได้อิสระเลย!)
+let activeKeys = [
+    "REVEZY-FREE-9999",
+    "REVEZY-VIP-BEAM",
+    "REVEZY-ADMIN-TEST",
+    "NOT-BOOSTER-OP"
+];
 
 app.use(express.json());
 
-// ฟังก์ชันดึงข้อมูลจาก JSONBin
-async function getKeys() {
-    try {
-        const res = await axios.get(`https://api.jsonbin.io/v3/b/${BIN_ID}/latest`, {
-            headers: { 'X-Master-Key': X_MASTER_KEY }
-        });
-        return res.data.record.keys || [];
-    } catch (error) {
-        return [];
-    }
-}
-
-// ฟังก์ชันบันทึกข้อมูลไป JSONBin
-async function saveKeys(keys) {
-    await axios.put(`https://api.jsonbin.io/v3/b/${BIN_ID}`, { keys }, {
-        headers: { 'X-Master-Key': X_MASTER_KEY, 'Content-Type': 'application/json' }
-    });
-}
-
-// หน้า UI จัดการคีย์ (Dark Mode / Glassmorphism)
-app.get('/', async (req, res) => {
-    const keys = await getKeys();
+// 1. เส้นทางหน้าหลัก (แสดงสถานะเว็บสร้างคีย์แบบง่ายๆ)
+app.get('/', (req, res) => {
     res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <script src="https://cdn.tailwindcss.com"></script>
-    </head>
-    <body class="bg-zinc-950 text-white p-5 font-mono">
-        <div class="max-w-md mx-auto bg-zinc-900 p-8 rounded-3xl border border-zinc-800 shadow-2xl">
-            <h1 class="text-xl font-bold mb-6 text-cyan-400 uppercase tracking-widest text-center">REVEZY ADMIN</h1>
-            <div class="space-y-2 mb-6 h-64 overflow-y-auto">
-                ${keys.map(k => `
-                    <div class="p-3 bg-black rounded-lg border border-zinc-800 flex justify-between items-center text-sm">
-                        <span>${k}</span>
-                        <button onclick="removeKey('${k}')" class="text-red-500 hover:text-red-400">ลบ</button>
-                    </div>
-                `).join('')}
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                :root { --bg: #0f172a; --card: #1e293b; --accent: #38bdf8; --danger: #ef4444; --success: #22c55e; }
+                body { background: var(--bg); color: #f1f5f9; font-family: 'Segoe UI', sans-serif; display: flex; justify-content: center; padding: 20px; }
+                .container { background: var(--card); padding: 25px; border-radius: 24px; box-shadow: 0 15px 30px rgba(0,0,0,0.5); width: 100%; max-width: 450px; }
+                h2 { text-align: center; color: var(--accent); margin-bottom: 25px; }
+                .key-list { display: flex; flex-direction: column; gap: 10px; }
+                .item { background: #334155; padding: 12px 20px; border-radius: 50px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #475569; }
+                code { color: #fbbf24; font-weight: bold; }
+                .btn { cursor: pointer; border: none; padding: 8px 16px; border-radius: 50px; font-weight: bold; transition: 0.2s; }
+                .del { background: var(--danger); color: white; }
+                .del:hover { opacity: 0.8; }
+                .add-box { display: flex; gap: 10px; margin-top: 25px; }
+                input { flex: 1; padding: 12px 20px; border-radius: 50px; border: none; background: #f1f5f9; outline: none; }
+                .add-btn { background: var(--success); color: white; padding: 10px 20px; border-radius: 50px; border: none; cursor: pointer; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h2>REVEZY KEY MANAGER</h2>
+                <div class="key-list" id="keyList">
+                    ${activeKeys.map(k => `
+                        <div class="item" id="key-${k}">
+                            <code>${k}</code>
+                            <button class="btn del" onclick="removeKey('${k}')">ลบ</button>
+                        </div>
+                    `).join('')}
+                </div>
+                <div class="add-box">
+                    <input type="text" id="kInput" placeholder="พิมพ์คีย์ใหม่ที่นี่...">
+                    <button class="add-btn" onclick="addKey()">เพิ่ม</button>
+                </div>
             </div>
-            <div class="flex gap-2">
-                <input id="k" placeholder="ใส่คีย์ใหม่..." class="w-full bg-black p-3 rounded-lg border border-zinc-700 outline-none focus:border-cyan-500">
-                <button onclick="addKey()" class="px-4 bg-cyan-600 rounded-lg hover:bg-cyan-500 font-bold">ADD</button>
-            </div>
-        </div>
-        <script>
-            async function addKey(){
-                const key = document.getElementById('k').value;
-                if(!key) return;
-                await fetch('/api/add?key=' + key);
-                location.reload();
-            }
-            async function removeKey(key){
-                await fetch('/api/remove?key=' + key);
-                location.reload();
-            }
-        </script>
-    </body>
-    </html>`);
+
+            <script>
+                async function removeKey(k) {
+                    await fetch('/remove?key=' + k);
+                    document.getElementById('key-'+k).remove();
+                }
+                async function addKey() {
+                    let k = document.getElementById('kInput').value;
+                    if(!k) return;
+                    await fetch('/add?key=' + k);
+                    location.reload();
+                }
+            </script>
+        </body>
+        </html>
+    `);
 });
 
-// API ตรวจสอบคีย์
-app.get('/api/verify', async (req, res) => {
-    const keys = await getKeys();
-    const isExists = keys.includes(req.query.key);
-    res.json({ success: isExists, message: isExists ? "Authorized" : "Invalid Key" });
-});
-
-// API เพิ่มคีย์
-app.get('/api/add', async (req, res) => {
-    const keys = await getKeys();
-    const newKey = req.query.key;
-    if (newKey && !keys.includes(newKey)) {
-        keys.push(newKey);
-        await saveKeys(keys);
+// 2. API สำหรับตรวจสอบคีย์ (ที่ตัวโปรแกรม Electron ดึงไปใช้)
+app.get('/verify', (req, res) => {
+    const userKey = req.query.key;
+    
+    if (activeKeys.includes(userKey)) {
+        res.json({ success: true, message: "คีย์ผ่านการตรวจสอบสำเร็จ!" });
+    } else {
+        res.json({ success: false, message: "ไม่พบข้อมูลคีย์นี้ หรือคีย์อาจจะหมดอายุแล้ว" });
     }
-    res.send('Success');
 });
 
-// API ลบคีย์
-app.get('/api/remove', async (req, res) => {
-    let keys = await getKeys();
-    keys = keys.filter(k => k !== req.query.key);
-    await saveKeys(keys);
-    res.send('Success');
+// 3. ระบบสร้างคีย์เพิ่มเติมแบบกำหนดเองได้ตามใจชอบผ่านเบราว์เซอร์
+app.get('/add', (req, res) => {
+    const newKey = req.query.key;
+    if(newKey && !activeKeys.includes(newKey)) {
+        activeKeys.push(newKey);
+        res.send(`เพิ่มคีย์ [ ${newKey} ] เรียบร้อยแล้ว! <a href="/">กลับหน้าหลัก</a>`);
+    } else {
+        res.send("คีย์ซ้ำ หรือ ไม่ได้ระบุคีย์");
+    }
 });
 
-module.exports = app;
+// 4. ระบบลบคีย์เมื่อหมดอายุใช้งาน
+app.get('/remove', (req, res) => {
+    const targetKey = req.query.key;
+    if(activeKeys.includes(targetKey)) {
+        activeKeys = activeKeys.filter(k => k !== targetKey);
+        res.send(`ลบคีย์ [ ${targetKey} ] ออกจากระบบแล้ว! <a href="/">กลับหน้าหลัก</a>`);
+    } else {
+        res.send("ไม่พบคีย์ที่ต้องการลบ");
+    }
+});
+
+app.listen(PORT, () => {
+    console.log(`Server key system running on port ${PORT}`);
+});
