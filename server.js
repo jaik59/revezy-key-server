@@ -1,23 +1,35 @@
 const express = require('express');
 const axios = require('axios');
 const app = express();
+const cors = require('cors');
 
-// Middleware
+// เปิดใช้งาน CORS เพื่อให้หน้าเว็บยิง API เข้ามาได้
+app.use(cors());
 app.use(express.json());
 
-// API Endpoint (ต้องขึ้นต้นด้วย /api เพื่อให้ Vercel ทำงานในรูปแบบ Serverless)
+// หน้าแรกกัน Error "Cannot GET /"
+app.get('/', (req, res) => {
+    res.json({ status: "ONLINE", message: "FiveM Interceptor API Ready" });
+});
+
+// API หลักสำหรับสแกนข้อมูล
 app.get('/api/fivem', async (req, res) => {
     const serverIp = req.query.ip;
-    if (!serverIp) return res.status(400).json({ error: 'ระบุ IP' });
+    if (!serverIp) return res.status(400).json({ error: 'กรุณาระบุ IP เป้าหมาย' });
 
     try {
-        // ใช้ axios แบบตั้งค่า timeout เพื่อกัน Crash
+        // ใช้ timeout เพื่อกัน Vercel ล่ม
         const response = await axios.get(`http://${serverIp}/players.json`, { timeout: 5000 });
-        res.json({ players: response.data });
+        
+        // ส่งข้อมูลกลับไปให้หน้าบ้าน
+        res.json({
+            players: response.data || [],
+            info: { host: serverIp, status: "SUCCESS" }
+        });
     } catch (err) {
-        res.status(500).json({ error: 'Connection Failed' });
+        res.status(500).json({ error: 'ไม่สามารถดึงข้อมูลจากเซิร์ฟเวอร์ได้: ' + err.message });
     }
 });
 
-// ✅ ส่วนสำคัญที่สุดสำหรับ Vercel: อย่าใช้ app.listen()
+// ส่งออก app เพื่อให้ Vercel ใช้งานได้
 module.exports = app;
