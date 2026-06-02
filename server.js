@@ -9,7 +9,7 @@ app.use((req, res, next) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('🚀 FiveM Dark Tactical Proxy API Online!');
+    res.send('🚀 FiveM Tactical OS API Online!');
 });
 
 app.get('/api/fivem', async (req, res) => {
@@ -24,25 +24,37 @@ app.get('/api/fivem', async (req, res) => {
         let rawPlayers = [];
         let infoData = null;
 
+        // ตรวจสอบว่าเป็น Cfx Code หรือ IP:Port
         if (serverIp.includes('cfx.re/join/') || !serverIp.includes(':')) {
             const endpointCode = serverIp.split('/').pop(); 
             const response = await axios.get(`https://servers-frontend.cfx.re/api/servers/single/${endpointCode}`, {
                 headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-                timeout: 5000
+                timeout: 6000
             });
             rawPlayers = response.data.Data.players || [];
             infoData = { 
-                vars: { sv_maxclients: response.data.Data.maxclients },
-                icon: response.data.Data.icon || null
+                vars: response.data.Data.vars || {},
+                maxClients: response.data.Data.maxclients,
+                resourcesCount: response.data.Data.resources ? response.data.Data.resources.length : 0,
+                icon: response.data.Data.icon || null,
+                banner: response.data.Data.vars?.banner_connecting || null
             };
         } else {
-            const playersResponse = await axios.get(`http://${serverIp}/players.json`, { timeout: 4000 });
-            const infoResponse = await axios.get(`http://${serverIp}/info.json`, { timeout: 4000 }).catch(() => null);
+            const playersResponse = await axios.get(`http://${serverIp}/players.json`, { timeout: 5000 });
+            const infoResponse = await axios.get(`http://${serverIp}/info.json`, { timeout: 5000 }).catch(() => null);
+            const dynamicResponse = await axios.get(`http://${serverIp}/dynamic.json`, { timeout: 5000 }).catch(() => null);
+            
             rawPlayers = playersResponse.data || [];
-            infoData = infoResponse ? infoResponse.data : null;
+            infoData = {
+                vars: infoResponse ? infoResponse.data.vars : {},
+                maxClients: dynamicResponse ? dynamicResponse.data.maxclients : (infoResponse ? infoResponse.data.maxclients : '??'),
+                resourcesCount: infoResponse && infoResponse.data.resources ? infoResponse.data.resources.length : 0,
+                icon: infoResponse ? infoResponse.data.icon : null,
+                banner: infoResponse && infoResponse.data.vars ? infoResponse.data.vars.banner_connecting : null
+            };
         }
 
-        // ประมวลผลคัดแยกผู้เล่น + เช็กเงื่อนไขแอดมินล่วงหน้าจากหลังบ้าน
+        // คัดแยก ประมวลผล และวิเคราะห์พฤติกรรมข้อมูลผู้เล่น (Core Core Data)
         const processedPlayers = rawPlayers.map(player => {
             let steamHex = "ไม่มี";
             let discordId = "ไม่มี";
@@ -57,18 +69,23 @@ app.get('/api/fivem', async (req, res) => {
                 });
             }
 
-            // คำนิยามคีย์เวิร์ดกลุ่มแอดมิน/ทีมงาน (เพิ่มลดคำตรงนี้ได้)
-            const adminKeywords = ['admin', 'staff', 'mod', 'helper', 'owner', 'developer', 'st |', 'แอดมิน', 'ทีมงาน'];
-            const isAdmin = adminKeywords.some(keyword => name.toLowerCase().includes(keyword));
+            // ระบบสแกนหา Admin คีย์เวิร์ด
+            const adminKeywords = ['admin', 'staff', 'mod', 'helper', 'owner', 'developer', 'st |', 'แอดมิน', 'ทีมงาน', 'ผู้ดูแล'];
+            const isAdmin = adminKeywords.some(kw => name.toLowerCase().includes(kw));
+
+            // ระบบสแกนหา Streamer คีย์เวิร์ด
+            const streamerKeywords = ['live', 'stream', 'streamer', 'yt', 'tt', 'ch', 'ยูทูป', 'สตรีม'];
+            const isStreamer = streamerKeywords.some(kw => name.toLowerCase().includes(kw));
 
             return {
                 id: player.id,
                 name: name,
-                ping: player.ping || 0,
+                ping: parseInt(player.ping) || 0,
                 steamHex: steamHex,
                 discordId: discordId,
                 license: license,
-                isAdmin: isAdmin // ยัดสถานะความโหดส่งไปหน้าบ้าน
+                isAdmin: isAdmin,
+                isStreamer: isStreamer
             };
         });
 
@@ -79,7 +96,7 @@ app.get('/api/fivem', async (req, res) => {
 
     } catch (error) {
         console.error(error);
-        res.status(500).json({ error: 'ไม่สามารถดึงข้อมูลเซิร์ฟเวอร์นี้ได้' });
+        res.status(500).json({ error: 'ล้มเหลว: ไม่สามารถติดต่อฐานข้อมูลปลายทางได้ หรือระบุที่อยู่ผิดพลาด' });
     }
 });
 
