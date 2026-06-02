@@ -1,128 +1,116 @@
 const express = require('express');
-const axios = require('axios');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+
+// 🛡️ เปิดใช้งาน Stealth Plugin เพื่อหลบการตรวจจับบอท (หลบ WebDriver Detection)
+puppeteer.use(StealthPlugin());
+
 const app = express();
+app.use(express.json());
 
-app.use((req, res, next) => {
-    res.header("Access-Control-Allow-Origin", "*");
-    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
-    next();
-});
+// ข้อมูลจำลองฐานข้อมูลบัญชีบอท (ในระบบจริงต้องดึงจาก Database)
+// คุกกี้ (Cookie) ต้องได้มาจากการสแกนเก็บ Session ตอนที่บอทล็อกอินไว้แล้ว
+const BOT_ACCOUNTS = [
+    {
+        botId: "bot_01",
+        username: "ไก่ชนสายซิ่ง",
+        cookies: [{ name: "sessionid", value: "YOUR_BOT_SESSION_ID_1", domain: ".tiktok.com" }]
+    },
+    {
+        botId: "bot_02",
+        username: "สมชายหัวใจสลัด",
+        cookies: [{ name: "sessionid", value: "YOUR_BOT_SESSION_ID_2", domain: ".tiktok.com" }]
+    }
+];
 
-app.get('/', (req, res) => {
-    res.send('🚀 FiveM Tactical Live Interceptor API Online!');
-});
+/**
+ * 📡 API Endpoint สำหรับสั่งบอทไปรุมกดติดตาม
+ * BODY: { "targetUsername": "target_user_id" }
+ */
+app.post('/api/follow', async (req, res) => {
+    const { targetUsername } = req.body;
 
-app.get('/api/fivem', async (req, res) => {
-    let serverIp = req.query.ip;
-    if (!serverIp) {
-        return res.status(400).json({ error: 'กรุณาระบุ IP หรือ CFX Join Code' });
+    if (!targetUsername) {
+        return res.status(400).json({ success: false, message: "กรุณาระบุ targetUsername" });
     }
 
-    serverIp = serverIp.replace('https://', '').replace('http://', '');
+    console.log(`[🚀 SYSTEM] เริ่มสั่งการบอทจำนวน ${BOT_ACCOUNTS.length} ตัว ไปที่เป้าหมาย: @${targetUsername}`);
+    
+    // สั่งให้บอททำงานแบบขนาน (Parallel) เพื่อความรวดเร็ว
+    const tasks = BOT_ACCOUNTS.map(bot => runFollowTask(bot, targetUsername));
+    const results = await Promise.all(tasks);
+
+    const successCount = results.filter(r => r.success).length;
+
+    res.json({
+        success: true,
+        summary: `สั่งการบอทสำเร็จ ${successCount}/${BOT_ACCOUNTS.length} ตัว`,
+        details: results
+    });
+});
+
+/**
+ * 🤖 Engine ควบคุมบอทรายตัวให้ทำงานเบื้องหลัง
+ */
+async function runFollowTask(bot, targetUsername) {
+    // โหมดสายโหด: ห้ามใช้ลูกตาทำงาน (headless: true) และจำลองความละเอียดหน้าจอมือถือ
+    const browser = await puppeteer.launch({
+        headless: true, 
+        args: [
+            '--no-sandbox', 
+            '--disable-setuid-sandbox',
+            // '--proxy-server=http://IP:PORT' // 🌐 ในชีวิตจริง "ต้อง" ใส่ Proxy แยกรายไอดีบอทตรงนี้!
+        ]
+    });
 
     try {
-        let rawPlayers = [];
-        let infoData = null;
+        const page = await browser.newPage();
+        
+        // 1. จำลอง User-Agent ให้เป็นมือถือ Android รุ่นยอดนิยมเพื่อความเนียน
+        await page.setUserAgent('Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36');
+        await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
 
-        if (serverIp.includes('cfx.re/join/') || !serverIp.includes(':')) {
-            const endpointCode = serverIp.split('/').pop(); 
-            const response = await axios.get(`https://servers-frontend.cfx.re/api/servers/single/${endpointCode}`, {
-                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-                timeout: 6000
-            });
-            rawPlayers = response.data.Data.players || [];
-            infoData = { 
-                vars: response.data.Data.vars || {},
-                maxClients: response.data.Data.maxclients,
-                resourcesCount: response.data.Data.resources ? response.data.Data.resources.length : 0,
-                icon: response.data.Data.icon || null,
-                banner: response.data.Data.vars?.banner_connecting || null
-            };
-        } else {
-            const playersResponse = await axios.get(`http://${serverIp}/players.json`, { timeout: 5000 });
-            const infoResponse = await axios.get(`http://${serverIp}/info.json factory`, { timeout: 5000 }).catch(() => null);
-            const dynamicResponse = await axios.get(`http://${serverIp}/dynamic.json`, { timeout: 5000 }).catch(() => null);
-            
-            rawPlayers = playersResponse.data || [];
-            infoData = {
-                vars: infoResponse ? infoResponse.data.vars : {},
-                maxClients: dynamicResponse ? dynamicResponse.data.maxclients : (infoResponse ? infoResponse.data.maxclients : '??'),
-                resourcesCount: infoResponse && infoResponse.data.resources ? infoResponse.data.resources.length : 0,
-                icon: infoResponse ? infoResponse.data.icon : null,
-                banner: infoResponse && infoResponse.data.vars ? infoResponse.data.vars.banner_connecting : null
-            };
+        // 2. ยัดคุกกี้ Session ของบอทตัวนั้นๆ เข้าไปเพื่อข้ามหน้าล็อกอิน
+        await page.setCookie(...bot.cookies);
+
+        // 3. สั่งบอทเดินทางไปที่หน้าโปรไฟล์เป้าหมาย
+        console.log(`[🤖 ${bot.botId}] กำลังเดินทางไปหน้าโปรไฟล์ @${targetUsername}`);
+        await page.goto(`https://www.tiktok.com/@${targetUsername}`, { waitUntil: 'networkidle2', timeout: 30000 });
+
+        // 4. ⏳ หน่วงเวลาสุ่ม (Humanize Delay) 2-4 วินาที ทำตัวเหมือนมนุษย์กำลังเลื่อนอ่านโปรไฟล์
+        const randomDelay = Math.floor(Math.random() * 2000) + 2000;
+        await new Promise(resolve => setTimeout(resolve, randomDelay));
+
+        // 5. ค้นหาปุ่มกดติดตาม (Follow Button) โดยใช้ Selector ยุทธวิธี
+        // หมายเหตุ: Selector ของ TikTok จะเปลี่ยนบ่อยมาก ต้องคอยอัปเดต
+        const followSelector = 'button[data-e2e="follow-button"]';
+        const isButtonExist = await page.$(followSelector);
+
+        if (!isButtonExist) {
+            throw new Error("ไม่พบปุ่มกดติดตาม (อาจจะกดไปแล้ว หรือหน้าเว็บเปลี่ยนคลาส)");
         }
 
-        const processedPlayers = rawPlayers.map(player => {
-            let steamHex = "ไม่มี";
-            let discordId = "ไม่มี";
-            let license = "ไม่มี";
-            let name = player.name || 'Unknown';
+        // 6. บอททำการลั่นไกคลิกขวับไปที่ปุ่มติดตาม
+        await page.click(followSelector);
+        console.log(`[✅ ${bot.botId}] ลั่นไกกดติดตามเรียบร้อย!`);
 
-            if (player.identifiers && Array.isArray(player.identifiers)) {
-                player.identifiers.forEach(id => {
-                    if (id.startsWith('steam:')) steamHex = id.replace('steam:', '');
-                    if (id.startsWith('discord:')) discordId = id.replace('discord:', '');
-                    if (id.startsWith('license:')) license = id.replace('license:', '');
-                });
-            }
+        // หน่วงเวลาอีกนิดก่อนปิดหน้าต่างเพื่อเซฟสถานะข้อมูลส่งไปเซิร์ฟเวอร์
+        await new Promise(resolve => setTimeout(resolve, 1500));
 
-            // 🛡️ ระบบสแกนทีมงาน
-            const adminKeywords = ['admin', 'staff', 'mod', 'helper', 'owner', 'developer', 'st |', 'แอดมิน', 'ทีมงาน', 'ผู้ดูแล'];
-            const isAdmin = adminKeywords.some(kw => name.toLowerCase().includes(kw));
-
-            // 🎥 ระบบสกัดกั้นสัญญาณและแกะรอยลิงก์สตรีมเมอร์อัตโนมัติ (NEW)
-            const streamerKeywords = ['live', 'stream', 'streamer', 'yt', 'tt', 'ch', 'fb', 'twitch', 'ยูทูป', 'สตรีม', 'ไลฟ์'];
-            let isStreamer = streamerKeywords.some(kw => name.toLowerCase().includes(kw));
-            let streamLink = null;
-            let streamPlatform = 'unknown';
-
-            const nameLower = name.toLowerCase();
-            
-            // ใช้ความโหดของ Regex จับแพทเทิร์นลิงก์หรือไอดีด่วน
-            if (nameLower.includes('fb') || nameLower.includes('facebook')) {
-                streamPlatform = 'facebook';
-                streamLink = 'https://www.facebook.com';
-            } else if (nameLower.includes('twitch.tv/') || nameLower.includes('ttv/')) {
-                streamPlatform = 'twitch';
-                const match = name.match(/(?:twitch\.tv\/|ttv\/)([a-zA-Z0-9_]+)/i);
-                streamLink = match ? `https://twitch.tv/${match[1]}` : 'https://twitch.tv';
-            } else if (nameLower.includes('youtube') || nameLower.includes('yt/')) {
-                streamPlatform = 'youtube';
-                streamLink = 'https://www.youtube.com';
-            } else if (nameLower.includes('tiktok.com/') || nameLower.includes('tt/')) {
-                streamPlatform = 'tiktok';
-                const match = name.match(/(?:tiktok\.com\/@|tt\/)([a-zA-Z0-9._]+)/i);
-                streamLink = match ? `https://www.tiktok.com/@${match[1]}` : 'https://www.tiktok.com';
-            } else if (isStreamer) {
-                // ถ้ามีคีย์เวิร์ดสตรีมแต่แกะลิงก์ตรงๆ ไม่ได้ ให้เสิร์ชชื่อบนกูเกิลนำทางไปก่อน
-                streamPlatform = 'live';
-                streamLink = `https://www.google.com/search?q=${encodeURIComponent(name + ' live stream')}`;
-            }
-
-            return {
-                id: player.id,
-                name: name,
-                ping: parseInt(player.ping) || 0,
-                steamHex: steamHex,
-                discordId: discordId,
-                license: license,
-                isAdmin: isAdmin,
-                isStreamer: isStreamer,
-                streamPlatform: streamPlatform,
-                streamLink: streamLink
-            };
-        });
-
-        res.json({
-            players: processedPlayers,
-            info: infoData
-        });
+        await browser.close();
+        return { botId: bot.botId, success: true, message: "Followed successfully" };
 
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: 'ล้มเหลว: ไม่สามารถดึงข้อมูลได้' });
+        console.error(`[🚨 ERROR - ${bot.botId}]:`, error.message);
+        await browser.close();
+        return { botId: bot.botId, success: false, error: error.message };
     }
-});
+}
 
-module.exports = app;
+// เปิด Server พิกัดพอร์ต 5000
+app.listen(5000, () => {
+    console.log("=========================================");
+    console.log("📡 TACTICAL TIKTOK AUTO-FOLLOW API ONLINE");
+    console.log("RUNNING ON: http://localhost:5000");
+    console.log("=========================================");
+});
