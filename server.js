@@ -9,7 +9,7 @@ app.use((req, res, next) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('🚀 FiveM Tactical OS API Online!');
+    res.send('🚀 FiveM Tactical Live Interceptor API Online!');
 });
 
 app.get('/api/fivem', async (req, res) => {
@@ -24,7 +24,6 @@ app.get('/api/fivem', async (req, res) => {
         let rawPlayers = [];
         let infoData = null;
 
-        // ตรวจสอบว่าเป็น Cfx Code หรือ IP:Port
         if (serverIp.includes('cfx.re/join/') || !serverIp.includes(':')) {
             const endpointCode = serverIp.split('/').pop(); 
             const response = await axios.get(`https://servers-frontend.cfx.re/api/servers/single/${endpointCode}`, {
@@ -41,7 +40,7 @@ app.get('/api/fivem', async (req, res) => {
             };
         } else {
             const playersResponse = await axios.get(`http://${serverIp}/players.json`, { timeout: 5000 });
-            const infoResponse = await axios.get(`http://${serverIp}/info.json`, { timeout: 5000 }).catch(() => null);
+            const infoResponse = await axios.get(`http://${serverIp}/info.json factory`, { timeout: 5000 }).catch(() => null);
             const dynamicResponse = await axios.get(`http://${serverIp}/dynamic.json`, { timeout: 5000 }).catch(() => null);
             
             rawPlayers = playersResponse.data || [];
@@ -54,7 +53,6 @@ app.get('/api/fivem', async (req, res) => {
             };
         }
 
-        // คัดแยก ประมวลผล และวิเคราะห์พฤติกรรมข้อมูลผู้เล่น (Core Core Data)
         const processedPlayers = rawPlayers.map(player => {
             let steamHex = "ไม่มี";
             let discordId = "ไม่มี";
@@ -69,13 +67,38 @@ app.get('/api/fivem', async (req, res) => {
                 });
             }
 
-            // ระบบสแกนหา Admin คีย์เวิร์ด
+            // 🛡️ ระบบสแกนทีมงาน
             const adminKeywords = ['admin', 'staff', 'mod', 'helper', 'owner', 'developer', 'st |', 'แอดมิน', 'ทีมงาน', 'ผู้ดูแล'];
             const isAdmin = adminKeywords.some(kw => name.toLowerCase().includes(kw));
 
-            // ระบบสแกนหา Streamer คีย์เวิร์ด
-            const streamerKeywords = ['live', 'stream', 'streamer', 'yt', 'tt', 'ch', 'ยูทูป', 'สตรีม'];
-            const isStreamer = streamerKeywords.some(kw => name.toLowerCase().includes(kw));
+            // 🎥 ระบบสกัดกั้นสัญญาณและแกะรอยลิงก์สตรีมเมอร์อัตโนมัติ (NEW)
+            const streamerKeywords = ['live', 'stream', 'streamer', 'yt', 'tt', 'ch', 'fb', 'twitch', 'ยูทูป', 'สตรีม', 'ไลฟ์'];
+            let isStreamer = streamerKeywords.some(kw => name.toLowerCase().includes(kw));
+            let streamLink = null;
+            let streamPlatform = 'unknown';
+
+            const nameLower = name.toLowerCase();
+            
+            // ใช้ความโหดของ Regex จับแพทเทิร์นลิงก์หรือไอดีด่วน
+            if (nameLower.includes('fb') || nameLower.includes('facebook')) {
+                streamPlatform = 'facebook';
+                streamLink = 'https://www.facebook.com';
+            } else if (nameLower.includes('twitch.tv/') || nameLower.includes('ttv/')) {
+                streamPlatform = 'twitch';
+                const match = name.match(/(?:twitch\.tv\/|ttv\/)([a-zA-Z0-9_]+)/i);
+                streamLink = match ? `https://twitch.tv/${match[1]}` : 'https://twitch.tv';
+            } else if (nameLower.includes('youtube') || nameLower.includes('yt/')) {
+                streamPlatform = 'youtube';
+                streamLink = 'https://www.youtube.com';
+            } else if (nameLower.includes('tiktok.com/') || nameLower.includes('tt/')) {
+                streamPlatform = 'tiktok';
+                const match = name.match(/(?:tiktok\.com\/@|tt\/)([a-zA-Z0-9._]+)/i);
+                streamLink = match ? `https://www.tiktok.com/@${match[1]}` : 'https://www.tiktok.com';
+            } else if (isStreamer) {
+                // ถ้ามีคีย์เวิร์ดสตรีมแต่แกะลิงก์ตรงๆ ไม่ได้ ให้เสิร์ชชื่อบนกูเกิลนำทางไปก่อน
+                streamPlatform = 'live';
+                streamLink = `https://www.google.com/search?q=${encodeURIComponent(name + ' live stream')}`;
+            }
 
             return {
                 id: player.id,
@@ -85,7 +108,9 @@ app.get('/api/fivem', async (req, res) => {
                 discordId: discordId,
                 license: license,
                 isAdmin: isAdmin,
-                isStreamer: isStreamer
+                isStreamer: isStreamer,
+                streamPlatform: streamPlatform,
+                streamLink: streamLink
             };
         });
 
@@ -96,7 +121,7 @@ app.get('/api/fivem', async (req, res) => {
 
     } catch (error) {
         console.error(error);
-        res.status(500).json({ error: 'ล้มเหลว: ไม่สามารถติดต่อฐานข้อมูลปลายทางได้ หรือระบุที่อยู่ผิดพลาด' });
+        res.status(500).json({ error: 'ล้มเหลว: ไม่สามารถดึงข้อมูลได้' });
     }
 });
 
