@@ -31,5 +31,5 @@ app.get('/api/fivem', async (req, res) => {
     }
 });
 
-// ส่งออก app เพื่อให้ Vercel ใช้งานได้
+// ✅ ส่วนนี้สำคัญที่สุด: เพิ่มเข้าไปที่บรรทัดสุดท้าย
 module.exports = app;
