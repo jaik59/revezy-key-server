@@ -6,7 +6,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-/* 🔑 [ระบบกำหนดคีย์] เพิ่ม-ลบ คีย์ของระบบคุณที่นี่ได้เลยครับ */
+/* 🔑 [ระบบกำหนดคีย์] เพิ่ม-ลด คีย์ที่ต้องการตรงนี้ได้เลย */
 const DATABASE_KEYS = [
     "REVEZY-ULTRA-FREE-777",
     "REVEZY-VIP-9999-XXXX",
@@ -27,7 +27,6 @@ app.get('/', (req, res) => {
 app.post('/api/verify', (req, res) => {
     const { key } = req.body;
 
-    // ตรวจสอบว่าผู้ใช้งานป้อนคีย์เข้ามาหรือไม่
     if (!key) {
         return res.status(400).json({
             success: false,
@@ -35,7 +34,6 @@ app.post('/api/verify', (req, res) => {
         });
     }
 
-    // ตรวจสอบความถูกต้องของคีย์ในระบบ
     const isKeyValid = DATABASE_KEYS.includes(key.trim());
 
     if (isKeyValid) {
@@ -51,10 +49,5 @@ app.post('/api/verify', (req, res) => {
     }
 });
 
-// เริ่มทำงานเซิร์ฟเวอร์ (รองรับทั้ง Vercel Serverless และการรันแบบ Local)
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Revezy Key Server runs smoothly on port ${PORT}`);
-});
-
+// 🎯 [FIX] ส่งออกโมดูลแอปตัวนี้ไปให้ Vercel Serverless เรียกใช้งานโดยตรง (ห้ามมี app.listen)
 module.exports = app;
