@@ -1,30 +1,60 @@
 const express = require('express');
+const cors = require('cors');
 const app = express();
+
+// เปิดใช้งาน CORS และการอ่านข้อมูลรูปแบบ JSON
+app.use(cors());
 app.use(express.json());
 
-// ตัวแปรเก็บประกาศ (ถ้าจะเอาแบบปิดเครื่องแล้วไม่หาย ต้องต่อ Database แต่เริ่มจากตัวนี้ก่อนได้ครับ)
-let announcementData = {
-    title: "ยินดีต้อนรับสู่ Hyzen",
-    message: "ระบบพร้อมใช้งาน",
-    show: true
-};
+/* 🔑 [ระบบกำหนดคีย์] เพิ่ม-ลบ คีย์ของระบบคุณที่นี่ได้เลยครับ */
+const DATABASE_KEYS = [
+    "REVEZY-ULTRA-FREE-777",
+    "REVEZY-VIP-9999-XXXX",
+    "REVEZY-CORE-KEY-2026",
+    "TEST-KEY-NOT-BEAM"
+];
 
-// 1. แอปวิ่งมาดึงประกาศที่นี่
-app.get('/api/announcement', (req, res) => {
-    res.json(announcementData);
+// หน้าแรกเซิร์ฟเวอร์ แสดงสถานะออนไลน์ของระบบคีย์
+app.get('/', (req, res) => {
+    res.status(200).json({
+        status: "online",
+        server: "REVEZY KEY SERVER",
+        total_active_keys: DATABASE_KEYS.length
+    });
 });
 
-// 2. แอดมิน (บีม) ส่งข้อความมาอัปเดตที่นี่
-app.post('/api/update-announcement', (req, res) => {
-    const { title, message, show, secretKey } = req.body;
-    
-    // กันคนอื่นมาแก้ ต้องมีรหัสลับ!
-    if (secretKey !== "MySecretPassword123") {
-        return res.status(403).send("Unauthorized");
+// API เส้นทางหลักที่แอป Electron จะเข้ามายิงเพื่อตรวจสอบสิทธิ์คีย์
+app.post('/api/verify', (req, res) => {
+    const { key } = req.body;
+
+    // ตรวจสอบว่าผู้ใช้งานป้อนคีย์เข้ามาหรือไม่
+    if (!key) {
+        return res.status(400).json({
+            success: false,
+            message: "กรุณาระบุรหัสคีย์เพื่อตรวจสอบสิทธิ์"
+        });
     }
 
-    announcementData = { title, message, show };
-    res.send("Announcement updated!");
+    // ตรวจสอบความถูกต้องของคีย์ในระบบ
+    const isKeyValid = DATABASE_KEYS.includes(key.trim());
+
+    if (isKeyValid) {
+        return res.status(200).json({
+            success: true,
+            message: "ยืนยันสิทธิ์สำเร็จ ยินดีต้อนรับเข้าสู่ระบบ"
+        });
+    } else {
+        return res.status(403).json({
+            success: false,
+            message: "รหัสคีย์ไม่ถูกต้อง ไม่ได้รับอนุญาตให้เข้าใช้งาน"
+        });
+    }
 });
 
-app.listen(3000);
+// เริ่มทำงานเซิร์ฟเวอร์ (รองรับทั้ง Vercel Serverless และการรันแบบ Local)
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`Revezy Key Server runs smoothly on port ${PORT}`);
+});
+
+module.exports = app;
