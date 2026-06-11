@@ -1,59 +1,39 @@
 const express = require('express');
 const cors = require('cors');
-const path = require('path');
-const app = express();
+const { Wallet } = require('truemoney-wallet-api'); // ติดตั้งโดย npm install truemoney-wallet-api
 
+const app = express();
 app.use(cors());
 app.use(express.json());
 
-// --- ส่วนของหน้า UI ---
-app.get('/', (req, res) => {
-    res.send(`
-    <!DOCTYPE html>
-    <html lang="th">
-    <head>
-        <script src="https://cdn.tailwindcss.com"></script>
-        <title>เติมเงินอั่งเปา</title>
-    </head>
-    <body class="bg-gray-900 flex items-center justify-center h-screen">
-        <div class="bg-gray-800 p-8 rounded-2xl shadow-2xl w-96 text-white border border-gray-700">
-            <h2 class="text-2xl font-bold mb-4 text-center text-red-400">เติมเงิน TrueMoney</h2>
-            <input type="text" id="link" placeholder="วางลิงก์ซองอั่งเปาที่นี่" class="w-full p-3 bg-gray-700 rounded-lg mb-4 outline-none border border-gray-600 focus:border-red-500">
-            <button onclick="submit()" id="btn" class="w-full bg-red-600 p-3 rounded-lg font-bold hover:bg-red-700 transition">ยืนยันการเติม</button>
-            <p id="msg" class="mt-4 text-center text-sm"></p>
-        </div>
-        <script>
-            async function submit() {
-                const link = document.getElementById('link').value;
-                const msg = document.getElementById('msg');
-                msg.innerText = "กำลังดำเนินการ...";
-                const res = await fetch('/api/redeem', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ link })
-                });
-                const data = await res.json();
-                msg.innerText = data.message;
-            }
-        </script>
-    </body>
-    </html>
-    `);
-});
+// ข้อมูลบัญชีรับเงิน (ควรเก็บเป็น Environment Variable เพื่อความปลอดภัย)
+const WALLET_PHONE = "08XXXXXXXX"; 
+const DEVICE_TOKEN = "ใส่_Device_Token_ของคุณที่นี่";
+const wallet = new Wallet(DEVICE_TOKEN);
 
-// --- ส่วนของ API Backend ---
-app.post('/api/redeem', (req, res) => {
-    const { link } = req.body;
-    
-    // ตรงนี้คือจุดที่คุณต้องนำ Library (เช่น truemoney-wallet-api) มาใส่
-    console.log(`ได้รับลิงก์: ${link}`);
+app.post('/api/redeem', async (req, res) => {
+    const { link, userId } = req.body;
 
-    if (!link || !link.includes('gift.truemoney.com')) {
-        return res.status(400).json({ success: false, message: "ลิงก์ไม่ถูกต้อง!" });
+    try {
+        // 1. ดึง Voucher Hash จากลิงก์
+        const voucherHash = link.split('v=')[1];
+        
+        // 2. สั่ง Redeem
+        const response = await wallet.redeemVoucher(voucherHash, WALLET_PHONE);
+        
+        if (response.status.code === 'SUCCESS') {
+            const amount = response.data.voucher.amount_baht;
+            
+            // 3. TODO: ตรงนี้คือจุดที่คุณต้องเขียน Code อัปเดต Database ของเกม
+            // db.query("UPDATE users SET balance = balance + ? WHERE id = ?", [amount, userId]);
+            
+            return res.json({ success: true, message: `เติมเงินสำเร็จ ${amount} บาท!` });
+        } else {
+            return res.json({ success: false, message: "ซองไม่ถูกต้องหรือถูกใช้ไปแล้ว" });
+        }
+    } catch (err) {
+        return res.status(500).json({ success: false, message: "เกิดข้อผิดพลาดจากระบบ" });
     }
-
-    // [จำลองการทำงาน]
-    res.json({ success: true, message: "✅ เติมเงินสำเร็จ! ยอดเข้าสู่ระบบเรียบร้อย" });
 });
 
-app.listen(3000, () => console.log('Server running at http://localhost:3000'));
+app.listen(3000, () => console.log('Top-up Service Ready!'));
