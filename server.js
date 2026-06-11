@@ -12,10 +12,9 @@ app.use(express.json());
 // -------------------------------------------------------------
 const DB_FILE = path.join(process.cwd(), 'database.json');
 
-// 🟢 สร้างตัวแปร RAM ไว้เก็บคีย์ชั่วคราว
+// สร้างตัวแปร RAM ไว้เก็บคีย์ชั่วคราว
 let memoryCache = null;
 
-// ฟังก์ชันอ่านข้อมูลอย่างปลอดภัย (อ่านจาก RAM ก่อน ถ้าไม่มีค่อยไปอ่านไฟล์)
 function readDB() {
     if (memoryCache !== null) {
         return memoryCache;
@@ -34,13 +33,10 @@ function readDB() {
     }
 }
 
-// ฟังก์ชันเขียนข้อมูล (บันทึกลง RAM ทันที เพื่อให้เว็บแสดงผลได้)
 function writeDB(data) {
-    // อัปเดตข้อมูลลง RAM 
     memoryCache = data;
 
     try {
-        // บน Vercel คำสั่งนี้จะทำงานไม่ได้เนื่องจากติดสิทธิ์ Read-Only 
         fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 4));
     } catch (error) {
         console.warn("⚠️ แจ้งเตือน: ระบบบันทึกข้อมูลลง RAM ชั่วคราว (Vercel Read-only environment)");
@@ -100,8 +96,8 @@ app.post('/api/keys/add', (req, res) => {
         expiresAt = targetDate.toISOString().split('T')[0];
     }
 
-    // เพิ่มคีย์ลงฐานข้อมูล (มันจะไปอัปเดตลงตัวแปร memoryCache)
-    db.push({ key: formattedKey, expiresAt, isActive: true });
+    // เพิ่มคีย์ลงฐานข้อมูล (รองรับฟิลด์ suspendReason ในอนาคต)
+    db.push({ key: formattedKey, expiresAt, isActive: true, suspendReason: "" });
     writeDB(db);
 
     res.status(200).json({ success: true, message: "เพิ่มคีย์สำเร็จ" });
@@ -115,14 +111,23 @@ app.post('/api/keys/delete', (req, res) => {
     res.status(200).json({ success: true, message: "ลบคีย์สำเร็จ" });
 });
 
-// Endpoint สำหรับ ระงับ/ปลดระงับ คีย์
+// Endpoint สำหรับ ระงับ/ปลดระงับ คีย์ (เพิ่มการรับค่า reason)
 app.post('/api/keys/toggle-status', (req, res) => {
-    const { keyToToggle } = req.body;
+    const { keyToToggle, reason } = req.body;
     let db = readDB();
     const keyIndex = db.findIndex(k => k.key === keyToToggle.trim());
     
     if (keyIndex !== -1) {
+        // สลับสถานะการใช้งาน
         db[keyIndex].isActive = !db[keyIndex].isActive;
+        
+        // ถ้าเปลี่ยนเป็นระงับ (isActive === false) ให้บันทึกสาเหตุ
+        if (!db[keyIndex].isActive) {
+            db[keyIndex].suspendReason = reason && reason.trim() !== "" ? reason.trim() : "ไม่ได้ระบุสาเหตุ";
+        } else {
+            db[keyIndex].suspendReason = ""; // ปลดระงับแล้วให้ล้างสาเหตุทิ้ง
+        }
+
         writeDB(db);
         res.status(200).json({ success: true, message: "อัปเดตสถานะคีย์สำเร็จ" });
     } else {
@@ -145,9 +150,13 @@ app.post('/api/verify', (req, res) => {
         return res.status(403).json({ success: false, message: "รหัสคีย์ไม่ถูกต้องในระบบ" });
     }
 
-    // 1. ตรวจสอบว่าถูกระงับการใช้งานหรือไม่
+    // 🟢 1. ตรวจสอบว่าถูกระงับการใช้งานหรือไม่ (พร้อมแจ้งสาเหตุไปยังโปรแกรม)
     if (foundKey.isActive === false) {
-        return res.status(403).json({ success: false, message: "รหัสคีย์นี้ถูกระงับการใช้งานชั่วคราว ติดต่อแอดมิน" });
+        const reasonStr = foundKey.suspendReason ? ` เนื่องจาก: ${foundKey.suspendReason}` : "";
+        return res.status(403).json({ 
+            success: false, 
+            message: `รหัสคีย์นี้ถูกระงับการใช้งานชั่วคราว${reasonStr} กรุณาติดต่อแอดมิน` 
+        });
     }
 
     // 2. ตรวจสอบวันหมดอายุ
@@ -255,7 +264,7 @@ function generateProDashboardHTML() {
             .badge-active { background: rgba(16, 185, 129, 0.1); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.2); }
             .badge-expired { background: rgba(239, 68, 68, 0.1); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.2); }
             .badge-perm { background: rgba(157, 78, 221, 0.1); color: #c084fc; border: 1px solid rgba(157, 78, 221, 0.2); }
-            .badge-suspended { background: rgba(245, 158, 11, 0.1); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.2); }
+            .badge-suspended { background: rgba(245, 158, 11, 0.1); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.2); text-align: left; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
             
             /* Action Buttons */
             .actions { display: flex; gap: 8px; justify-content: flex-end; }
@@ -366,7 +375,9 @@ function generateProDashboardHTML() {
                 keys.forEach(k => {
                     let statusBadge = '';
                     if(k.isActive === false) {
-                        statusBadge = '<span class="badge badge-suspended">⏸️ Suspended</span>';
+                        // 🟢 แสดงสาเหตุการระงับบน badge และทำเป็น Tooltip เมื่อเอาเมาส์ไปชี้ได้ด้วย
+                        const reasonText = k.suspendReason ? `: \${k.suspendReason}` : '';
+                        statusBadge = \`<span class="badge badge-suspended" title="สาเหตุ: \${k.suspendReason || 'ไม่ได้ระบุ'}">⏸️ Suspended\${reasonText}</span>\`;
                     } else if(k.isExpired) {
                         statusBadge = '<span class="badge badge-expired">🔴 Expired</span>';
                     } else if(k.expiresAt === 'Permanent') {
@@ -385,7 +396,7 @@ function generateProDashboardHTML() {
                             <td>\${statusBadge}</td>
                             <td>
                                 <div class="actions">
-                                    <button class="action-btn \${toggleColor}" onclick="toggleStatus('\${k.key}')">\${toggleText}</button>
+                                    <button class="action-btn \${toggleColor}" onclick="toggleStatus('\${k.key}', \${k.isActive})">\${toggleText}</button>
                                     <button class="action-btn btn-delete" onclick="deleteKey('\${k.key}')">ลบทิ้ง</button>
                                 </div>
                             </td>
@@ -419,11 +430,19 @@ function generateProDashboardHTML() {
                 }
             }
 
-            async function toggleStatus(keyToToggle) {
+            // 🟢 ฟังก์ชันปรับปรุงใหม่: เช็คว่าถ้ากำลังจะระงับคีย์ ให้เด้ง Prompt ถามเหตุผล
+            async function toggleStatus(keyToToggle, currentActive) {
+                let reason = "";
+                
+                if (currentActive === true) {
+                    reason = prompt("กรุณาระบุสาเหตุการระงับสิทธิ์คีย์นี้ (เช่น: หมดอายุความร่วมมือ, บัคสคริปต์):");
+                    if (reason === null) return; // กดยกเลิก Prompt ไม่ต้องทำงานต่อ
+                }
+
                 const res = await fetch('/api/keys/toggle-status', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ keyToToggle })
+                    body: JSON.stringify({ keyToToggle, reason })
                 });
                 if(res.ok) loadKeys();
             }
