@@ -8,23 +8,34 @@ app.use(cors());
 app.use(express.json());
 
 // -------------------------------------------------------------
-// [ระบบฐานข้อมูล JSON ไฟล์] ป้องกันคีย์หายเมื่อเซิร์ฟเวอร์รีสตาร์ท
+// [ระบบฐานข้อมูล JSON ไฟล์] ปรับปรุงให้รองรับ Vercel (Read-Only Environment)
 // -------------------------------------------------------------
-const DB_FILE = path.join(__dirname, 'database.json');
+// เปลี่ยนมาใช้ process.cwd() เพื่อให้ Vercel หาตำแหน่งไฟล์ใน Root Directory ได้อย่างแม่นยำ
+const DB_FILE = path.join(process.cwd(), 'database.json');
 
-// ตรวจสอบและสร้างไฟล์ฐานข้อมูลหากยังไม่มี
-if (!fs.existsSync(DB_FILE)) {
-    fs.writeFileSync(DB_FILE, JSON.stringify([]));
-}
-
-// ฟังก์ชันอ่านและเขียนข้อมูล
+// ฟังก์ชันอ่านข้อมูลอย่างปลอดภัย
 function readDB() {
-    const data = fs.readFileSync(DB_FILE, 'utf8');
-    return JSON.parse(data);
+    try {
+        if (fs.existsSync(DB_FILE)) {
+            const data = fs.readFileSync(DB_FILE, 'utf8');
+            return JSON.parse(data);
+        }
+        return [];
+    } catch (error) {
+        console.error("❌ ไม่สามารถอ่านไฟล์ฐานข้อมูลได้:", error);
+        return [];
+    }
 }
 
+// ฟังก์ชันเขียนข้อมูลพร้อมระบบป้องกันเซิร์ฟเวอร์แครช
 function writeDB(data) {
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 4));
+    try {
+        // บน Vercel คำสั่งนี้จะทำงานไม่ได้เนื่องจากติดสิทธิ์ Read-Only 
+        // แต่การใส่ try-catch จะช่วยให้ระบบข้ามไปทำงานต่อได้โดยเว็บไม่แครช (ไม่เกิด Error 500)
+        fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 4));
+    } catch (error) {
+        console.warn("⚠️ แจ้งเตือน: ระบบไม่สามารถเขียนไฟล์ลง Vercel ได้ (Read-only environment)");
+    }
 }
 
 // ฟังก์ชันช่วยเช็คว่าคีย์หมดอายุหรือยัง (อิงตามเขตเวลาประเทศไทย GMT+7)
@@ -80,7 +91,7 @@ app.post('/api/keys/add', (req, res) => {
         expiresAt = targetDate.toISOString().split('T')[0];
     }
 
-    // เพิ่มคีย์ลงฐานข้อมูล (มีสถานะ isActive เพื่อใช้สำหรับระบบระงับคีย์)
+    // เพิ่มคีย์ลงฐานข้อมูล
     db.push({ key: formattedKey, expiresAt, isActive: true });
     writeDB(db);
 
@@ -95,7 +106,7 @@ app.post('/api/keys/delete', (req, res) => {
     res.status(200).json({ success: true, message: "ลบคีย์สำเร็จ" });
 });
 
-// Endpoint ใหม่: สำหรับ ระงับ/ปลดระงับ คีย์
+// Endpoint สำหรับ ระงับ/ปลดระงับ คีย์
 app.post('/api/keys/toggle-status', (req, res) => {
     const { keyToToggle } = req.body;
     let db = readDB();
@@ -292,7 +303,7 @@ function generateProDashboardHTML() {
                             <tr>
                                 <th>รหัสเปิดใช้งาน (LICENSE KEY)</th>
                                 <th>วันหมดอายุ (EXPIRATION)</th>
-                                <th>สถานะ (STATUS)</th>
+                                <th>暗号 (STATUS)</th>
                                 <th style="text-align:right;">การจัดการ (ACTIONS)</th>
                             </tr>
                         </thead>
@@ -304,7 +315,6 @@ function generateProDashboardHTML() {
         </div>
 
         <script>
-            // จัดการแสดง/ซ่อน ช่องกรอกจำนวนวัน
             function toggleCustomDays() {
                 const type = document.getElementById('keyType').value;
                 const daysGroup = document.getElementById('customDaysGroup');
@@ -315,7 +325,6 @@ function generateProDashboardHTML() {
                 }
             }
 
-            // สุ่มคีย์ฟอร์แมตสวยๆ
             function generateRandomKey() {
                 const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
                 let segment1 = '', segment2 = '', segment3 = '';
@@ -325,7 +334,6 @@ function generateProDashboardHTML() {
                 document.getElementById('keyInput').value = \`RVZ-\${segment1}-\${segment2}-\${segment3}\`;
             }
 
-            // โหลดข้อมูลจากเซิร์ฟเวอร์
             async function loadKeys() {
                 try {
                     const res = await fetch('/api/keys');
@@ -336,7 +344,6 @@ function generateProDashboardHTML() {
                 } catch(err) { console.error('Error fetching data'); }
             }
 
-            // วาดตาราง
             function renderTable(keys) {
                 const tbody = document.getElementById('keyTableBody');
                 document.getElementById('totalStatus').innerHTML = \`🟢 Active Database: \${keys.length} Keys\`;
@@ -349,8 +356,6 @@ function generateProDashboardHTML() {
 
                 keys.forEach(k => {
                     let statusBadge = '';
-                    
-                    // เช็คสถานะการแสดงผล Badge
                     if(k.isActive === false) {
                         statusBadge = '<span class="badge badge-suspended">⏸️ Suspended</span>';
                     } else if(k.isExpired) {
@@ -361,7 +366,6 @@ function generateProDashboardHTML() {
                         statusBadge = '<span class="badge badge-active">🟢 Active</span>';
                     }
 
-                    // ข้อความปุ่มระงับ
                     const toggleText = k.isActive ? 'ระงับคีย์' : 'ปลดระงับ';
                     const toggleColor = k.isActive ? 'btn-suspend' : 'badge-active';
 
@@ -381,7 +385,6 @@ function generateProDashboardHTML() {
                 });
             }
 
-            // เพิ่มคีย์ใหม่
             async function addKey() {
                 const keyInput = document.getElementById('keyInput');
                 const keyType = document.getElementById('keyType').value;
@@ -407,7 +410,6 @@ function generateProDashboardHTML() {
                 }
             }
 
-            // สลับสถานะ ระงับ/ปลดระงับ
             async function toggleStatus(keyToToggle) {
                 const res = await fetch('/api/keys/toggle-status', {
                     method: 'POST',
@@ -417,7 +419,6 @@ function generateProDashboardHTML() {
                 if(res.ok) loadKeys();
             }
 
-            // ลบคีย์
             async function deleteKey(keyToDelete) {
                 if(!confirm('คุณแน่ใจหรือไม่ว่าต้องการลบคีย์นี้ออกจากระบบถาวร?')) return;
                 const res = await fetch('/api/keys/delete', {
@@ -428,7 +429,6 @@ function generateProDashboardHTML() {
                 if(res.ok) loadKeys();
             }
 
-            // โหลดข้อมูลครั้งแรก
             loadKeys();
         </script>
     </body>
@@ -436,5 +436,5 @@ function generateProDashboardHTML() {
     `;
 }
 
-// Export ใช้งาน (ถ้าใช้เป็น Main file ให้ใช้ app.listen(3000) แทน)
+// Export ตัวแอปพลิเคชันสำหรับใช้งานบน Vercel
 module.exports = app;
