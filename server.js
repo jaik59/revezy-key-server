@@ -1,34 +1,51 @@
 const express = require('express');
+const axios = require('axios');
 const app = express();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Endpoint ยิงมาที่ /api/topup เพื่อตรวจสอบระบบก่อนตัดอั่งเปาจริง
+const MYSTRIX_VOUCHER_API = 'https://api.mystrix2.me/';
+
+// Vercel จะรับช่วงต่อ ยิงไปหา Mystrix ให้เอง
 app.post('/api/topup', async (req, res) => {
     try {
-        const { link, phone, user_id } = req.body;
+        const { link, phone } = req.body;
 
-        // เช็คความครบถ้วนของข้อมูลเบื้องต้น
         if (!link || !phone) {
-            return res.status(400).json({ 
-                status: 'fail', 
-                message: 'คีย์เซิร์ฟเวอร์พบว่าข้อมูลลิงก์หรือเบอร์โทรศัพท์ส่งมาไม่ครบ' 
-            });
+            return res.status(400).json({ status: 'fail', message: 'ข้อมูลลิงก์หรือเบอร์โทรศัพท์ไม่ครบถ้วน' });
         }
 
-        // [คุณสามารถเขียน Logic บล็อกบอท ตรวจคีย์สิทธิ์ หรือการเข้ารหัสเพิ่มตรงนี้ได้ในอนาคต]
+        // ยิงไป Mystrix จากฝั่ง Vercel (ข้ามผ่านการบล็อกไอพีโฮสติ้งหลัก)
+        const response = await axios.post(MYSTRIX_VOUCHER_API, new URLSearchParams({
+            phone: phone,
+            gift: link
+        }).toString(), {
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'User-Agent': 'sellzone24'
+            },
+            timeout: 15000 // กำหนดเวลา Timeout 15 วินาที
+        });
 
-        // หากทุกอย่างปกติ ให้ส่ง success กลับไปเพื่อให้ PHP รันงานต่อได้ทันที
+        // ส่งผลลัพธ์ดิบที่ได้จาก Mystrix กลับไปให้ PHP ของคุณประมวลผลต่อ
         return res.status(200).json({ 
             status: 'success', 
-            message: 'ผ่านด่านตรวจสอบความปลอดภัยเรียบร้อย' 
+            mystrix_data: response.data 
         });
 
     } catch (error) {
+        if (error.response) {
+            // กรณีที่ Mystrix ตอบกลับมาแต่สถานะพัง (เช่น 400, 403, 500)
+            return res.status(400).json({ 
+                status: 'fail', 
+                message: `Mystrix ปฏิเสธการเชื่อมต่อผ่าน Vercel (Code ${error.response.status})` 
+            });
+        }
         return res.status(500).json({ 
             status: 'fail', 
-            message: 'เกิดข้อผิดพลาดภายในระบบคีย์เซิร์ฟเวอร์: ' + error.message 
+            message: 'Vercel ไม่สามารถติดต่อ Mystrix ได้: ' + error.message 
         });
     }
 });
