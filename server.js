@@ -1,50 +1,55 @@
 const express = require('express');
-const { Wallet } = require('truemoney-wallet-api');
+const axios = require('axios');
 const app = express();
 
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// ข้อมูลส่วนตัว (ห้ามเผยแพร่)
-const WALLET_PHONE = process.env.WALLET_PHONE; 
-const DEVICE_TOKEN = process.env.DEVICE_TOKEN; 
-const wallet = new Wallet(DEVICE_TOKEN);
+// ค่าคงที่
+const MYSTRIX_VOUCHER_API = 'https://api.mystrix2.me/';
+const REVEZY_KEY_SERVER = 'https://revezy-key-server.vercel.app/'; 
 
-/**
- * API: POST /api/topup
- * รับค่า: { "link": "https://gift.truemoney.com/campaign/?v=...", "userId": "user123" }
- */
 app.post('/api/topup', async (req, res) => {
-    const { link, userId } = req.body;
+    // 1. ตรวจสอบการ Login (คุณต้องมีระบบ Auth ของคุณเอง เช่น check JWT หรือ Session)
+    const { link, phone, user_id, username } = req.body; 
 
-    if (!link || !userId) {
-        return res.status(400).json({ success: false, message: "กรุณาระบุ Link และ UserId" });
-    }
+    if (!link) return res.status(400).json({ status: 'fail', message: 'ลิ้งอั่งเปาไม่ถูกต้อง' });
+    if (!phone) return res.status(400).json({ status: 'fail', message: 'ยังไม่ได้ตั้งค่าเบอร์รับเงิน' });
 
     try {
-        // 1. สกัดเอา Voucher Hash ออกจาก URL
-        const voucherHash = link.split('v=')[1];
-        if (!voucherHash) return res.status(400).json({ success: false, message: "ลิงก์ไม่ถูกต้อง" });
+        // 2. เรียกใช้งาน Revezy Key Server (ตามที่คุณต้องการ)
+        // สมมติว่าต้องส่ง token หรือ key ไปตรวจสอบ
+        const keyResponse = await axios.post(REVEZY_KEY_SERVER, { /* ใส่ parameters ของคุณ */ });
 
-        // 2. ทำการ Redeem
-        const response = await wallet.redeemVoucher(voucherHash, WALLET_PHONE);
+        // 3. ส่ง Request ไปที่ Mystrix
+        const response = await axios.post(MYSTRIX_VOUCHER_API, `phone=${phone}&gift=${link}`, {
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'User-Agent': 'sellzone24'
+            }
+        });
 
-        // 3. ตรวจสอบสถานะการเติมเงิน
-        if (response.status.code === 'SUCCESS') {
-            const amount = response.data.voucher.amount_baht;
+        const result = response.data;
 
-            // TODO: เชื่อมต่อ Database ของคุณที่นี่
-            // await db.execute("UPDATE users SET credit = credit + ? WHERE id = ?", [amount, userId]);
-            // await db.execute("INSERT INTO transactions (user_id, amount, link) VALUES (?, ?, ?)", [userId, amount, link]);
+        // 4. ตรวจสอบสถานะ (Logic เดิม)
+        if (result.status && result.status.code === 'SUCCESS') {
+            const amount = result.data.voucher.redeemed_amount_baht || 0;
+            
+            // TODO: เชื่อมต่อ Database (MySQL) เพื่อ Update ยอดเงินตรงนี้
+            // await db.execute("UPDATE users SET point = point + ? WHERE id = ?", [amount, user_id]);
 
-            console.log(`User ${userId} เติมเงินสำเร็จ: ${amount} บาท`);
-            return res.json({ success: true, message: "เติมเงินสำเร็จ", amount });
+            // 5. ส่ง Discord Webhook (เหมือนโค้ดเดิม)
+            // await axios.post(WEBHOOK_URL, { ...json_data });
+
+            return res.status(200).json({ status: 'success', message: `คุณได้รับเงินจำนวน ${amount} พ้อยท์` });
         } else {
-            return res.status(400).json({ success: false, message: response.status.message || "ไม่สามารถทำรายการได้" });
+            return res.status(400).json({ status: 'fail', message: result.status?.message || 'ทำรายการไม่สำเร็จ' });
         }
-    } catch (err) {
-        console.error("Error:", err);
-        return res.status(500).json({ success: false, message: "ระบบขัดข้อง กรุณาลองใหม่ภายหลัง" });
+
+    } catch (error) {
+        return res.status(500).json({ status: 'fail', message: 'เชื่อมต่อระบบอั่งเปาไม่สำเร็จ' });
     }
 });
 
-app.listen(3000, () => console.log('Top-up API running on port 3000'));
+app.listen(3000, () => console.log('API Server running on port 3000'));
