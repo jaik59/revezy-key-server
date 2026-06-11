@@ -8,17 +8,24 @@ app.use(cors());
 app.use(express.json());
 
 // -------------------------------------------------------------
-// [ระบบฐานข้อมูล JSON ไฟล์] ปรับปรุงให้รองรับ Vercel (Read-Only Environment)
+// [ระบบฐานข้อมูล JSON ไฟล์] ปรับปรุงให้รองรับ Vercel (Memory Cache)
 // -------------------------------------------------------------
-// เปลี่ยนมาใช้ process.cwd() เพื่อให้ Vercel หาตำแหน่งไฟล์ใน Root Directory ได้อย่างแม่นยำ
 const DB_FILE = path.join(process.cwd(), 'database.json');
 
-// ฟังก์ชันอ่านข้อมูลอย่างปลอดภัย
+// 🟢 สร้างตัวแปร RAM ไว้เก็บคีย์ชั่วคราว
+let memoryCache = null;
+
+// ฟังก์ชันอ่านข้อมูลอย่างปลอดภัย (อ่านจาก RAM ก่อน ถ้าไม่มีค่อยไปอ่านไฟล์)
 function readDB() {
+    if (memoryCache !== null) {
+        return memoryCache;
+    }
+
     try {
         if (fs.existsSync(DB_FILE)) {
             const data = fs.readFileSync(DB_FILE, 'utf8');
-            return JSON.parse(data);
+            memoryCache = JSON.parse(data);
+            return memoryCache;
         }
         return [];
     } catch (error) {
@@ -27,14 +34,16 @@ function readDB() {
     }
 }
 
-// ฟังก์ชันเขียนข้อมูลพร้อมระบบป้องกันเซิร์ฟเวอร์แครช
+// ฟังก์ชันเขียนข้อมูล (บันทึกลง RAM ทันที เพื่อให้เว็บแสดงผลได้)
 function writeDB(data) {
+    // อัปเดตข้อมูลลง RAM 
+    memoryCache = data;
+
     try {
         // บน Vercel คำสั่งนี้จะทำงานไม่ได้เนื่องจากติดสิทธิ์ Read-Only 
-        // แต่การใส่ try-catch จะช่วยให้ระบบข้ามไปทำงานต่อได้โดยเว็บไม่แครช (ไม่เกิด Error 500)
         fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 4));
     } catch (error) {
-        console.warn("⚠️ แจ้งเตือน: ระบบไม่สามารถเขียนไฟล์ลง Vercel ได้ (Read-only environment)");
+        console.warn("⚠️ แจ้งเตือน: ระบบบันทึกข้อมูลลง RAM ชั่วคราว (Vercel Read-only environment)");
     }
 }
 
@@ -91,7 +100,7 @@ app.post('/api/keys/add', (req, res) => {
         expiresAt = targetDate.toISOString().split('T')[0];
     }
 
-    // เพิ่มคีย์ลงฐานข้อมูล
+    // เพิ่มคีย์ลงฐานข้อมูล (มันจะไปอัปเดตลงตัวแปร memoryCache)
     db.push({ key: formattedKey, expiresAt, isActive: true });
     writeDB(db);
 
@@ -303,7 +312,7 @@ function generateProDashboardHTML() {
                             <tr>
                                 <th>รหัสเปิดใช้งาน (LICENSE KEY)</th>
                                 <th>วันหมดอายุ (EXPIRATION)</th>
-                                <th>暗号 (STATUS)</th>
+                                <th>สถานะ (STATUS)</th>
                                 <th style="text-align:right;">การจัดการ (ACTIONS)</th>
                             </tr>
                         </thead>
