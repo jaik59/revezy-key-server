@@ -6,12 +6,10 @@ app.use(cors());
 app.use(express.json());
 
 // -------------------------------------------------------------
-// [ระบบฐานข้อมูลชั่วคราว] ใช้ RAM Cache เต็มรูปแบบเพื่อให้รันบน Vercel ได้ไม่แครช
+// [ระบบฐานข้อมูลชั่วคราว] ใช้ RAM Cache เพื่อให้รันบน Vercel ได้ 100%
+// ไม่มี fs, ไม่มี path, ไม่มีการเขียนไฟล์ลงดิสก์
 // -------------------------------------------------------------
-let memoryCache = [
-    // สามารถใส่คีย์เริ่มต้นสำหรับทดสอบตรงนี้ได้ เช่น:
-    // { key: "RVZ-DEMO-KEY1-9999", expiresAt: "Permanent", isActive: true, suspendReason: "" }
-];
+let memoryCache = [];
 
 function readDB() {
     return memoryCache;
@@ -19,10 +17,9 @@ function readDB() {
 
 function writeDB(data) {
     memoryCache = data;
-    // เอาระบบ fs.writeFileSync ออกถาวร ป้องกัน Serverless Function แครช
 }
 
-// ฟังก์ชันช่วยเช็คว่าคีย์หมดอายุหรือยัง (อิงตามเขตเวลาประเทศไทย GMT+7)
+// ฟังก์ชันช่วยเช็คว่าคีย์หมดอายุหรือยัง
 function isKeyExpired(keyObj) {
     if (keyObj.expiresAt === "Permanent") return false;
     
@@ -158,28 +155,9 @@ function generateProDashboardHTML() {
         <title>Revezy Core — Key Management</title>
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Kanit:wght@300;400;500;600&display=swap" rel="stylesheet">
         <style>
-            :root {
-                --bg-main: #06080d;
-                --card-bg: rgba(18, 20, 28, 0.7);
-                --border-color: rgba(255, 255, 255, 0.08);
-                --primary: #9d4edd;
-                --primary-hover: #7b2cbf;
-                --text-main: #f8fafc;
-                --text-muted: #94a3b8;
-                --success: #10b981;
-                --danger: #ef4444;
-                --warning: #f59e0b;
-            }
+            :root { --bg-main: #06080d; --card-bg: rgba(18, 20, 28, 0.7); --border-color: rgba(255, 255, 255, 0.08); --primary: #9d4edd; --primary-hover: #7b2cbf; --text-main: #f8fafc; --text-muted: #94a3b8; --success: #10b981; --danger: #ef4444; --warning: #f59e0b; }
             * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', 'Kanit', sans-serif; }
-            body { 
-                background-color: var(--bg-main); 
-                background-image: radial-gradient(circle at 50% 0%, rgba(157, 78, 221, 0.1) 0%, transparent 50%);
-                color: var(--text-main); 
-                padding: 40px 20px; 
-                display: flex; 
-                justify-content: center; 
-                min-height: 100vh;
-            }
+            body { background-color: var(--bg-main); background-image: radial-gradient(circle at 50% 0%, rgba(157, 78, 221, 0.1) 0%, transparent 50%); color: var(--text-main); padding: 40px 20px; display: flex; justify-content: center; min-height: 100vh; }
             .wrapper { width: 100%; max-width: 900px; }
             .header-panel { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
             .brand-title { font-size: 24px; font-weight: 700; display: flex; align-items: center; gap: 8px; text-shadow: 0 0 20px rgba(157, 78, 221, 0.5); }
@@ -312,7 +290,7 @@ function generateProDashboardHTML() {
                 keys.forEach(k => {
                     let statusBadge = '';
                     if(k.isActive === false) {
-                        const reasonText = k.suspendReason ? `: \${k.suspendReason}` : '';
+                        const reasonText = k.suspendReason ? \`: \${k.suspendReason}\` : '';
                         statusBadge = \`<span class="badge badge-suspended" title="สาเหตุ: \${k.suspendReason || 'ไม่ได้ระบุ'}">⏸️ Suspended\${reasonText}</span>\`;
                     } else if(k.isExpired) {
                         statusBadge = '<span class="badge badge-expired">🔴 Expired</span>';
@@ -332,7 +310,7 @@ function generateProDashboardHTML() {
                             <td>\${statusBadge}</td>
                             <td>
                                 <div class="actions">
-                                    <button class="action-btn \${toggleColor}" onclick="toggleStatus('\${k.key}', \'- \${k.isActive}')">\${toggleText}</button>
+                                    <button class="action-btn \${toggleColor}" onclick="toggleStatus('\${k.key}', \${k.isActive})">\${toggleText}</button>
                                     <button class="action-btn btn-delete" onclick="deleteKey('\${k.key}')">ลบทิ้ง</button>
                                 </div>
                             </td>
