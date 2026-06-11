@@ -1,43 +1,59 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
-// ฐานข้อมูลจำลอง (ในอนาคตควรต่อกับ MySQL/Redis ของ Server เกม)
-let serverState = {
-    players: [
-        { id: 1, name: "Admin_Beam", isAdmin: true, ping: 12, isCheating: false },
-        { id: 42, name: "Potential_Hacker", isAdmin: false, ping: 150, isCheating: true }
-    ],
-    lastScan: Date.now()
-};
-
-// 1. API: ดึงรายชื่อผู้เล่นทั้งหมด (สำหรับ Dashboard)
-app.get('/api/monitor/players', (req, res) => {
-    res.json({ success: true, data: serverState.players });
+// --- ส่วนของหน้า UI ---
+app.get('/', (req, res) => {
+    res.send(`
+    <!DOCTYPE html>
+    <html lang="th">
+    <head>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <title>เติมเงินอั่งเปา</title>
+    </head>
+    <body class="bg-gray-900 flex items-center justify-center h-screen">
+        <div class="bg-gray-800 p-8 rounded-2xl shadow-2xl w-96 text-white border border-gray-700">
+            <h2 class="text-2xl font-bold mb-4 text-center text-red-400">เติมเงิน TrueMoney</h2>
+            <input type="text" id="link" placeholder="วางลิงก์ซองอั่งเปาที่นี่" class="w-full p-3 bg-gray-700 rounded-lg mb-4 outline-none border border-gray-600 focus:border-red-500">
+            <button onclick="submit()" id="btn" class="w-full bg-red-600 p-3 rounded-lg font-bold hover:bg-red-700 transition">ยืนยันการเติม</button>
+            <p id="msg" class="mt-4 text-center text-sm"></p>
+        </div>
+        <script>
+            async function submit() {
+                const link = document.getElementById('link').value;
+                const msg = document.getElementById('msg');
+                msg.innerText = "กำลังดำเนินการ...";
+                const res = await fetch('/api/redeem', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ link })
+                });
+                const data = await res.json();
+                msg.innerText = data.message;
+            }
+        </script>
+    </body>
+    </html>
+    `);
 });
 
-// 2. API: ตรวจสอบสถานะการฉีดโปร (รับข้อมูลจาก Script ในเกม)
-app.post('/api/monitor/report', (req, res) => {
-    const { playerId, isCheating, reason } = req.body;
-    const player = serverState.players.find(p => p.id === playerId);
+// --- ส่วนของ API Backend ---
+app.post('/api/redeem', (req, res) => {
+    const { link } = req.body;
     
-    if (player) {
-        player.isCheating = isCheating;
-        player.cheatReason = reason;
-        return res.json({ success: true, message: "Report updated" });
+    // ตรงนี้คือจุดที่คุณต้องนำ Library (เช่น truemoney-wallet-api) มาใส่
+    console.log(`ได้รับลิงก์: ${link}`);
+
+    if (!link || !link.includes('gift.truemoney.com')) {
+        return res.status(400).json({ success: false, message: "ลิงก์ไม่ถูกต้อง!" });
     }
-    res.status(404).json({ success: false, message: "Player not found" });
+
+    // [จำลองการทำงาน]
+    res.json({ success: true, message: "✅ เติมเงินสำเร็จ! ยอดเข้าสู่ระบบเรียบร้อย" });
 });
 
-// 3. API: สั่ง Kick/Ban ผู้เล่น
-app.post('/api/monitor/action', (req, res) => {
-    const { playerId, action } = req.body;
-    // ตรงนี้คุณต้องเขียน Code เชื่อมกับ RCON หรือ Remote Command ของเซิร์ฟเวอร์
-    console.log(`Action: ${action} on Player ID: ${playerId}`);
-    res.json({ success: true, message: `Command ${action} sent to server` });
-});
-
-app.listen(3000, () => console.log('Monitor API running on port 3000'));
+app.listen(3000, () => console.log('Server running at http://localhost:3000'));
