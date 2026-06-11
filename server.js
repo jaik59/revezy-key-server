@@ -1,32 +1,45 @@
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
-/* 🔑 [ระบบฐานข้อมูลคีย์เริ่มต้น] กำหนดรูปแบบ { key, expiresAt: 'YYYY-MM-DD' หรือ 'Permanent' } */
-let DATABASE_KEYS = [
-    { key: "REVEZY-ULTRA-FREE-777", expiresAt: "Permanent" },
-    { key: "REVEZY-VIP-9999-XXXX", expiresAt: "2026-12-31" },
-    { key: "REVEZY-CORE-KEY-2026", expiresAt: "2026-07-15" },
-    { key: "TEST-KEY-NOT-BEAM", expiresAt: "Permanent" }
-];
+// -------------------------------------------------------------
+// [ระบบฐานข้อมูล JSON ไฟล์] ป้องกันคีย์หายเมื่อเซิร์ฟเวอร์รีสตาร์ท
+// -------------------------------------------------------------
+const DB_FILE = path.join(__dirname, 'database.json');
 
-// ฟังก์ชันช่วยเช็คว่าคีย์หมดอายุหรือยัง (อิงตามเขตเวลาประเทศไทย)
+// ตรวจสอบและสร้างไฟล์ฐานข้อมูลหากยังไม่มี
+if (!fs.existsSync(DB_FILE)) {
+    fs.writeFileSync(DB_FILE, JSON.stringify([]));
+}
+
+// ฟังก์ชันอ่านและเขียนข้อมูล
+function readDB() {
+    const data = fs.readFileSync(DB_FILE, 'utf8');
+    return JSON.parse(data);
+}
+
+function writeDB(data) {
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 4));
+}
+
+// ฟังก์ชันช่วยเช็คว่าคีย์หมดอายุหรือยัง (อิงตามเขตเวลาประเทศไทย GMT+7)
 function isKeyExpired(keyObj) {
     if (keyObj.expiresAt === "Permanent") return false;
     
-    // ตั้งค่าเวลาปัจจุบันอิงตาม Timezone ไทย (GMT+7)
     const tzOffset = 7 * 60 * 60 * 1000;
     const nowInTH = new Date(Date.now() + tzOffset);
-    const todayStr = nowInTH.toISOString().split('T')[0]; // ได้ฟอร์แมต 'YYYY-MM-DD'
+    const todayStr = nowInTH.toISOString().split('T')[0]; 
     
     return todayStr > keyObj.expiresAt;
 }
 
 // -------------------------------------------------------------
-// [ระบบหน้าบ้านแผงควบคุม Dashboard สไตล์โปร]
+// [API Endpoints สำหรับ Dashboard]
 // -------------------------------------------------------------
 
 app.get('/', (req, res) => {
@@ -35,8 +48,8 @@ app.get('/', (req, res) => {
 });
 
 app.get('/api/keys', (req, res) => {
-    // ปรับปรุงการส่งข้อมูล: ระบุสถานะหมดอายุให้หน้าบ้านรับรู้ด้วย
-    const updatedKeys = DATABASE_KEYS.map(k => ({
+    const db = readDB();
+    const updatedKeys = db.map(k => ({
         ...k,
         isExpired: isKeyExpired(k)
     }));
@@ -44,32 +57,57 @@ app.get('/api/keys', (req, res) => {
 });
 
 app.post('/api/keys/add', (req, res) => {
-    const { newKey, duration } = req.body;
+    const { newKey, keyType, customDays } = req.body;
+    
     if (!newKey || newKey.trim() === "") {
         return res.status(400).json({ success: false, message: "กรุณาระบุรหัสคีย์" });
     }
     
     const formattedKey = newKey.trim();
-    if (DATABASE_KEYS.some(k => k.key === formattedKey)) {
+    const db = readDB();
+
+    if (db.some(k => k.key === formattedKey)) {
         return res.status(400).json({ success: false, message: "มีคีย์นี้อยู่ในระบบแล้ว" });
     }
 
-    // คำนวณวันหมดอายุตามที่เลือกมาจากหน้าเว็บ
     let expiresAt = "Permanent";
-    if (duration !== "Permanent") {
+    if (keyType === "custom") {
+        if (!customDays || customDays <= 0) {
+            return res.status(400).json({ success: false, message: "กรุณาระบุจำนวนวันที่ถูกต้อง" });
+        }
         const tzOffset = 7 * 60 * 60 * 1000;
-        const targetDate = new Date(Date.now() + tzOffset + (parseInt(duration) * 24 * 60 * 60 * 1000));
+        const targetDate = new Date(Date.now() + tzOffset + (parseInt(customDays) * 24 * 60 * 60 * 1000));
         expiresAt = targetDate.toISOString().split('T')[0];
     }
 
-    DATABASE_KEYS.push({ key: formattedKey, expiresAt });
+    // เพิ่มคีย์ลงฐานข้อมูล (มีสถานะ isActive เพื่อใช้สำหรับระบบระงับคีย์)
+    db.push({ key: formattedKey, expiresAt, isActive: true });
+    writeDB(db);
+
     res.status(200).json({ success: true, message: "เพิ่มคีย์สำเร็จ" });
 });
 
 app.post('/api/keys/delete', (req, res) => {
     const { keyToDelete } = req.body;
-    DATABASE_KEYS = DATABASE_KEYS.filter(k => k.key !== keyToDelete.trim());
+    let db = readDB();
+    db = db.filter(k => k.key !== keyToDelete.trim());
+    writeDB(db);
     res.status(200).json({ success: true, message: "ลบคีย์สำเร็จ" });
+});
+
+// Endpoint ใหม่: สำหรับ ระงับ/ปลดระงับ คีย์
+app.post('/api/keys/toggle-status', (req, res) => {
+    const { keyToToggle } = req.body;
+    let db = readDB();
+    const keyIndex = db.findIndex(k => k.key === keyToToggle.trim());
+    
+    if (keyIndex !== -1) {
+        db[keyIndex].isActive = !db[keyIndex].isActive;
+        writeDB(db);
+        res.status(200).json({ success: true, message: "อัปเดตสถานะคีย์สำเร็จ" });
+    } else {
+        res.status(404).json({ success: false, message: "ไม่พบคีย์ในระบบ" });
+    }
 });
 
 // -------------------------------------------------------------
@@ -78,19 +116,21 @@ app.post('/api/keys/delete', (req, res) => {
 
 app.post('/api/verify', (req, res) => {
     const { key } = req.body;
+    if (!key) return res.status(400).json({ success: false, message: "กรุณาระบุรหัสคีย์เพื่อตรวจสอบสิทธิ์" });
 
-    if (!key) {
-        return res.status(400).json({ success: false, message: "กรุณาระบุรหัสคีย์เพื่อตรวจสอบสิทธิ์" });
-    }
-
-    // ค้นหาคีย์ในระบบ
-    const foundKey = DATABASE_KEYS.find(k => k.key === key.trim());
+    const db = readDB();
+    const foundKey = db.find(k => k.key === key.trim());
 
     if (!foundKey) {
         return res.status(403).json({ success: false, message: "รหัสคีย์ไม่ถูกต้องในระบบ" });
     }
 
-    // ตรวจสอบวันหมดอายุของคีย์
+    // 1. ตรวจสอบว่าถูกระงับการใช้งานหรือไม่
+    if (foundKey.isActive === false) {
+        return res.status(403).json({ success: false, message: "รหัสคีย์นี้ถูกระงับการใช้งานชั่วคราว ติดต่อแอดมิน" });
+    }
+
+    // 2. ตรวจสอบวันหมดอายุ
     if (isKeyExpired(foundKey)) {
         return res.status(403).json({ success: false, message: `รหัสคีย์นี้หมดอายุการใช้งานแล้วเมื่อ (${foundKey.expiresAt})` });
     }
@@ -103,7 +143,9 @@ app.post('/api/verify', (req, res) => {
     });
 });
 
-// 🎨 หน้าตาเว็บดีไซน์สไตล์ซอฟต์แวร์ระดับมืออาชีพ (Dark Minimalist & Premium Purple)
+// -------------------------------------------------------------
+// 🎨 หน้าตาเว็บ UI (Modern Dark & Glassmorphism)
+// -------------------------------------------------------------
 function generateProDashboardHTML() {
     return `
     <!DOCTYPE html>
@@ -111,92 +153,179 @@ function generateProDashboardHTML() {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Revezy Hub — Key Management</title>
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Kanit:wght@300;400;500&display=swap" rel="stylesheet">
+        <title>Revezy Core — Key Management</title>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Kanit:wght@300;400;500;600&display=swap" rel="stylesheet">
         <style>
+            :root {
+                --bg-main: #06080d;
+                --card-bg: rgba(18, 20, 28, 0.7);
+                --border-color: rgba(255, 255, 255, 0.08);
+                --primary: #9d4edd;
+                --primary-hover: #7b2cbf;
+                --text-main: #f8fafc;
+                --text-muted: #94a3b8;
+                --success: #10b981;
+                --danger: #ef4444;
+                --warning: #f59e0b;
+            }
             * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', 'Kanit', sans-serif; }
-            body { background-color: #090a0f; color: #f1f2f6; padding: 60px 20px; display: flex; justify-content: center; -webkit-font-smoothing: antialiased; }
-            .wrapper { width: 100%; max-width: 800px; }
+            body { 
+                background-color: var(--bg-main); 
+                background-image: radial-gradient(circle at 50% 0%, rgba(157, 78, 221, 0.1) 0%, transparent 50%);
+                color: var(--text-main); 
+                padding: 40px 20px; 
+                display: flex; 
+                justify-content: center; 
+                min-height: 100vh;
+            }
+            .wrapper { width: 100%; max-width: 900px; }
             
             /* Header */
-            .header-panel { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; border-bottom: 1px solid #1e2230; padding-bottom: 20px; }
-            .brand-title { font-size: 20px; font-weight: 600; color: #ffffff; letter-spacing: -0.5px; display: flex; align-items: center; gap: 8px; }
-            .brand-title span { color: #8b5cf6; }
-            .server-status { font-size: 12px; background: #10b98115; color: #10b981; padding: 4px 10px; border-radius: 20px; font-weight: 500; border: 1px solid #10b98133; }
+            .header-panel { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+            .brand-title { font-size: 24px; font-weight: 700; display: flex; align-items: center; gap: 8px; text-shadow: 0 0 20px rgba(157, 78, 221, 0.5); }
+            .brand-title span { color: var(--primary); }
+            .server-status { font-size: 13px; background: rgba(16, 185, 129, 0.1); color: var(--success); padding: 6px 14px; border-radius: 30px; font-weight: 500; border: 1px solid rgba(16, 185, 129, 0.2); backdrop-filter: blur(4px); }
             
-            /* Dashboard Card */
-            .main-card { background: #12141c; border: 1px solid #1e2230; border-radius: 12px; padding: 28px; box-shadow: 0 4px 24px rgba(0,0,0,0.4); margin-bottom: 24px; }
-            .section-title { font-size: 14px; font-weight: 500; color: #94a3b8; margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.5px; }
+            /* Cards */
+            .main-card { 
+                background: var(--card-bg); 
+                border: 1px solid var(--border-color); 
+                border-radius: 16px; 
+                padding: 30px; 
+                margin-bottom: 24px; 
+                backdrop-filter: blur(12px);
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            }
+            .section-title { font-size: 15px; font-weight: 600; color: var(--text-muted); margin-bottom: 20px; text-transform: uppercase; letter-spacing: 1px; display: flex; align-items: center; gap: 8px;}
             
-            /* Input & Select Grid */
-            .control-grid { display: grid; grid-template-columns: 2fr 1fr auto; gap: 12px; margin-bottom: 12px; }
-            input, select { background: #1a1d29; border: 1px solid #2e344a; border-radius: 6px; padding: 12px 14px; color: #ffffff; font-size: 14px; outline: none; transition: all 0.2s; }
-            input:focus, select:focus { border-color: #8b5cf6; box-shadow: 0 0 0 2px rgba(139,92,246,0.2); }
+            /* Form Grid */
+            .control-grid { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+            .input-group { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 6px; }
+            .input-group label { font-size: 13px; color: var(--text-muted); }
+            
+            input, select { 
+                background: rgba(0, 0, 0, 0.3); 
+                border: 1px solid var(--border-color); 
+                border-radius: 8px; 
+                padding: 12px 16px; 
+                color: white; 
+                font-size: 14px; 
+                outline: none; 
+                transition: all 0.3s; 
+                width: 100%;
+            }
+            input:focus, select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(157, 78, 221, 0.2); }
+            
+            /* Buttons */
+            .btn { background: linear-gradient(135deg, var(--primary), var(--primary-hover)); border: none; color: white; font-weight: 600; font-size: 14px; padding: 12px 24px; border-radius: 8px; cursor: pointer; transition: all 0.3s; height: 43px; margin-top: auto; white-space: nowrap; box-shadow: 0 4px 15px rgba(157, 78, 221, 0.3); }
+            .btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(157, 78, 221, 0.5); }
+            .btn-secondary { background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); color: var(--text-main); font-size: 13px; padding: 8px 16px; border-radius: 6px; cursor: pointer; transition: 0.2s; }
+            .btn-secondary:hover { background: rgba(255,255,255,0.1); }
+            
+            /* Table */
+            .table-container { overflow-x: auto; }
+            .key-table { width: 100%; border-collapse: collapse; }
+            .key-table th { text-align: left; padding: 16px; font-size: 13px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color); background: rgba(0,0,0,0.2); }
+            .key-table td { padding: 16px; font-size: 14px; border-bottom: 1px solid rgba(255,255,255,0.03); vertical-align: middle; }
+            .key-row:hover { background: rgba(255,255,255,0.02); }
+            
+            /* Badges & Texts */
+            .key-code { font-family: 'Courier New', Courier, monospace; font-weight: 600; color: #a78bfa; background: rgba(167, 139, 250, 0.1); padding: 4px 8px; border-radius: 6px; border: 1px dashed rgba(167, 139, 250, 0.3); letter-spacing: 1px; }
+            .badge { display: inline-flex; align-items: center; justify-content: center; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; letter-spacing: 0.5px; }
+            .badge-active { background: rgba(16, 185, 129, 0.1); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.2); }
+            .badge-expired { background: rgba(239, 68, 68, 0.1); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.2); }
+            .badge-perm { background: rgba(157, 78, 221, 0.1); color: #c084fc; border: 1px solid rgba(157, 78, 221, 0.2); }
+            .badge-suspended { background: rgba(245, 158, 11, 0.1); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.2); }
             
             /* Action Buttons */
-            .btn { background: #8b5cf6; border: none; color: #ffffff; font-weight: 500; font-size: 14px; padding: 0 20px; border-radius: 6px; cursor: pointer; transition: background 0.2s; display: inline-flex; align-items: center; justify-content: center; }
-            .btn:hover { background: #7c3aed; }
-            .btn-secondary { background: #1e2230; border: 1px solid #2e344a; color: #94a3b8; font-size: 12px; padding: 6px 12px; border-radius: 4px; margin-top: 8px; cursor: pointer; }
-            .btn-secondary:hover { color: #fff; border-color: #475569; }
+            .actions { display: flex; gap: 8px; justify-content: flex-end; }
+            .action-btn { background: transparent; border: 1px solid var(--border-color); color: var(--text-muted); font-size: 12px; padding: 6px 12px; border-radius: 6px; cursor: pointer; transition: 0.2s; font-weight: 500; }
+            .action-btn:hover { background: rgba(255,255,255,0.1); color: white; }
+            .btn-suspend:hover { border-color: var(--warning); color: var(--warning); background: rgba(245, 158, 11, 0.1); }
+            .btn-delete:hover { border-color: var(--danger); color: var(--danger); background: rgba(239, 68, 68, 0.1); }
             
-            /* Data Table Style */
-            .key-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-            .key-table th { text-align: left; padding: 12px 16px; font-size: 13px; font-weight: 500; color: #64748b; border-bottom: 1px solid #1e2230; }
-            .key-table td { padding: 14px 16px; font-size: 14px; color: #e2e8f0; border-bottom: 1px solid #141722; }
-            .key-row:hover { background: #161923; }
-            
-            /* Badges */
-            .key-code { font-family: 'Courier New', Courier, monospace; font-weight: 600; color: #38bdf8; }
-            .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; }
-            .badge-active { background: #0284c715; color: #38bdf8; border: 1px solid #0284c733; }
-            .badge-expired { background: #ef444415; color: #f87171; border: 1px solid #ef444433; }
-            .badge-perm { background: #8b5cf615; color: #c084fc; border: 1px solid #8b5cf633; }
-            
-            .action-cell { text-align: right; }
-            .btn-delete { background: transparent; border: none; color: #94a3b8; cursor: pointer; font-size: 13px; padding: 4px 8px; border-radius: 4px; transition: all 0.2s; }
-            .btn-delete:hover { color: #f87171; background: #ef444415; }
+            /* Utility */
+            .hidden { display: none !important; }
         </style>
     </head>
     <body>
         <div class="wrapper">
             <div class="header-panel">
-                <div class="brand-title">REVEZY <span>CORE</span> <small style="font-size:12px; color:#64748b; font-weight:400;">v2.0</small></div>
-                <div class="server-status" id="totalStatus">Loading Platform...</div>
+                <div class="brand-title">REVEZY <span>CORE</span> <small style="font-size:12px; color:var(--text-muted); font-weight:500;">v3.0 PRO</small></div>
+                <div class="server-status" id="totalStatus">🟢 System Online</div>
             </div>
 
             <div class="main-card">
-                <div class="section-title">ออกสิทธิ์การเข้าใช้งานใหม่</div>
+                <div class="section-title">🔑 สร้างสิทธิ์การเข้าใช้งานใหม่</div>
                 <div class="control-grid">
-                    <input type="text" id="keyInput" placeholder="ระบุคีย์ระบบ หรือกดปุ่มด้านล่างเพื่อสุ่ม">
-                    <select id="durationSelect">
-                        <option value="1">อายุ 1 วัน (Daily)</option>
-                        <option value="7">อายุ 7 วัน (Weekly)</option>
-                        <option value="30">อายุ 30 วัน (Monthly)</option>
-                        <option value="Permanent" selected>ใช้งานถาวร (Permanent)</option>
-                    </select>
-                    <button class="btn" onclick="addKey()">สร้างคีย์</button>
+                    <div class="input-group" style="flex: 2;">
+                        <label>รหัสคีย์ (License Key)</label>
+                        <input type="text" id="keyInput" placeholder="กรอกคีย์ หรือ กดปุ่มสุ่มอัตโนมัติ">
+                    </div>
+                    
+                    <div class="input-group">
+                        <label>ประเภทอายุการใช้งาน</label>
+                        <select id="keyType" onchange="toggleCustomDays()">
+                            <option value="custom">กำหนดวันเอง (Days)</option>
+                            <option value="permanent">ใช้งานถาวร (Lifetime)</option>
+                        </select>
+                    </div>
+
+                    <div class="input-group" id="customDaysGroup">
+                        <label>จำนวนวัน</label>
+                        <input type="number" id="customDays" placeholder="เช่น 30" min="1" value="30">
+                    </div>
+
+                    <div class="input-group" style="flex: 0;">
+                        <label>&nbsp;</label>
+                        <button class="btn" onclick="addKey()">+ สร้างคีย์</button>
+                    </div>
                 </div>
                 <button class="btn-secondary" onclick="generateRandomKey()">⚡ สุ่มคีย์อัตโนมัติ</button>
             </div>
 
-            <div class="main-card" style="padding: 16px 0;">
-                <div class="section-title" style="padding: 12px 28px 4px 28px;">คีย์ในคลังข้อมูลระบบ</div>
-                <table class="key-table">
-                    <thead>
-                        <tr>
-                            <th>รหัสเปิดใช้งาน (LICENSE KEY)</th>
-                            <th>วันหมดอายุ (EXPIRATION)</th>
-                            <th>สถานะ (STATUS)</th>
-                            <th class="action-cell">การจัดการ</th>
-                        </tr>
-                    </thead>
-                    <tbody id="keyTableBody">
-                        </tbody>
-                </table>
+            <div class="main-card" style="padding: 0; overflow: hidden;">
+                <div class="section-title" style="padding: 24px 24px 0 24px;">🗄️ คลังข้อมูลระบบ</div>
+                <div class="table-container">
+                    <table class="key-table">
+                        <thead>
+                            <tr>
+                                <th>รหัสเปิดใช้งาน (LICENSE KEY)</th>
+                                <th>วันหมดอายุ (EXPIRATION)</th>
+                                <th>สถานะ (STATUS)</th>
+                                <th style="text-align:right;">การจัดการ (ACTIONS)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="keyTableBody">
+                            </tbody>
+                    </table>
+                </div>
             </div>
         </div>
 
         <script>
+            // จัดการแสดง/ซ่อน ช่องกรอกจำนวนวัน
+            function toggleCustomDays() {
+                const type = document.getElementById('keyType').value;
+                const daysGroup = document.getElementById('customDaysGroup');
+                if(type === 'permanent') {
+                    daysGroup.classList.add('hidden');
+                } else {
+                    daysGroup.classList.remove('hidden');
+                }
+            }
+
+            // สุ่มคีย์ฟอร์แมตสวยๆ
+            function generateRandomKey() {
+                const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+                let segment1 = '', segment2 = '', segment3 = '';
+                for (let i = 0; i < 4; i++) segment1 += chars.charAt(Math.floor(Math.random() * chars.length));
+                for (let i = 0; i < 4; i++) segment2 += chars.charAt(Math.floor(Math.random() * chars.length));
+                for (let i = 0; i < 4; i++) segment3 += chars.charAt(Math.floor(Math.random() * chars.length));
+                document.getElementById('keyInput').value = \`RVZ-\${segment1}-\${segment2}-\${segment3}\`;
+            }
+
+            // โหลดข้อมูลจากเซิร์ฟเวอร์
             async function loadKeys() {
                 try {
                     const res = await fetch('/api/keys');
@@ -207,59 +336,66 @@ function generateProDashboardHTML() {
                 } catch(err) { console.error('Error fetching data'); }
             }
 
-            function generateRandomKey() {
-                const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-                let segment1 = '', segment2 = '';
-                for (let i = 0; i < 4; i++) segment1 += chars.charAt(Math.floor(Math.random() * chars.length));
-                for (let i = 0; i < 4; i++) segment2 += chars.charAt(Math.floor(Math.random() * chars.length));
-                document.getElementById('keyInput').value = \`REVEZY-\${segment1}-\${segment2}\`;
-            }
-
+            // วาดตาราง
             function renderTable(keys) {
                 const tbody = document.getElementById('keyTableBody');
-                document.getElementById('totalStatus').innerText = 'ACTIVE KEYS: ' + keys.length;
+                document.getElementById('totalStatus').innerHTML = \`🟢 Active Database: \${keys.length} Keys\`;
                 tbody.innerHTML = '';
 
                 if(keys.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#64748b; padding:30px;">ไม่มีคีย์เปิดใช้งานในระบบ</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:40px;">ไม่พบข้อมูลคีย์ในระบบ</td></tr>';
                     return;
                 }
 
                 keys.forEach(k => {
                     let statusBadge = '';
-                    if(k.isExpired) {
-                        statusBadge = '<span class="badge badge-expired">Expired</span>';
+                    
+                    // เช็คสถานะการแสดงผล Badge
+                    if(k.isActive === false) {
+                        statusBadge = '<span class="badge badge-suspended">⏸️ Suspended</span>';
+                    } else if(k.isExpired) {
+                        statusBadge = '<span class="badge badge-expired">🔴 Expired</span>';
                     } else if(k.expiresAt === 'Permanent') {
-                        statusBadge = '<span class="badge badge-perm">Lifetime</span>';
+                        statusBadge = '<span class="badge badge-perm">♾️ Lifetime</span>';
                     } else {
-                        statusBadge = '<span class="badge badge-active">Active</span>';
+                        statusBadge = '<span class="badge badge-active">🟢 Active</span>';
                     }
+
+                    // ข้อความปุ่มระงับ
+                    const toggleText = k.isActive ? 'ระงับคีย์' : 'ปลดระงับ';
+                    const toggleColor = k.isActive ? 'btn-suspend' : 'badge-active';
 
                     tbody.innerHTML += \`
                         <tr class="key-row">
                             <td><span class="key-code">\${k.key}</span></td>
-                            <td><span style="font-size:13px; color:\${k.isExpired ? '#f87171' : '#cbd5e1'}">\${k.expiresAt}</span></td>
+                            <td><span style="color:\${k.isExpired ? 'var(--danger)' : 'var(--text-muted)'}">\${k.expiresAt}</span></td>
                             <td>\${statusBadge}</td>
-                            <td class="action-cell">
-                                <button class="btn-delete" onclick="deleteKey('\${k.key}')">ลบสิทธิ์</button>
+                            <td>
+                                <div class="actions">
+                                    <button class="action-btn \${toggleColor}" onclick="toggleStatus('\${k.key}')">\${toggleText}</button>
+                                    <button class="action-btn btn-delete" onclick="deleteKey('\${k.key}')">ลบทิ้ง</button>
+                                </div>
                             </td>
                         </tr>
                     \`;
                 });
             }
 
+            // เพิ่มคีย์ใหม่
             async function addKey() {
                 const keyInput = document.getElementById('keyInput');
-                const durationSelect = document.getElementById('durationSelect');
+                const keyType = document.getElementById('keyType').value;
+                const customDays = document.getElementById('customDays').value;
                 
                 const newKey = keyInput.value.trim();
-                const duration = durationSelect.value;
-                if(!newKey) return;
+                if(!newKey) return alert("กรุณาระบุคีย์");
+
+                const payload = { newKey, keyType, customDays };
 
                 const res = await fetch('/api/keys/add', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ newKey, duration })
+                    body: JSON.stringify(payload)
                 });
                 
                 if(res.ok) {
@@ -271,8 +407,19 @@ function generateProDashboardHTML() {
                 }
             }
 
+            // สลับสถานะ ระงับ/ปลดระงับ
+            async function toggleStatus(keyToToggle) {
+                const res = await fetch('/api/keys/toggle-status', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ keyToToggle })
+                });
+                if(res.ok) loadKeys();
+            }
+
+            // ลบคีย์
             async function deleteKey(keyToDelete) {
-                if(!confirm('ยืนยันที่จะถอนการสิทธิ์การใช้งานคีย์นี้หรือไม่?')) return;
+                if(!confirm('คุณแน่ใจหรือไม่ว่าต้องการลบคีย์นี้ออกจากระบบถาวร?')) return;
                 const res = await fetch('/api/keys/delete', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -281,6 +428,7 @@ function generateProDashboardHTML() {
                 if(res.ok) loadKeys();
             }
 
+            // โหลดข้อมูลครั้งแรก
             loadKeys();
         </script>
     </body>
@@ -288,4 +436,5 @@ function generateProDashboardHTML() {
     `;
 }
 
+// Export ใช้งาน (ถ้าใช้เป็น Main file ให้ใช้ app.listen(3000) แทน)
 module.exports = app;
